@@ -1,46 +1,54 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import { useAuthStore } from '../src/store/authStore';
 import { View, ActivityIndicator } from 'react-native';
 
 export default function RootLayout() {
   const { isReady, isAuthenticated, hasPinSetup, initialize } = useAuthStore();
-  const segments = useSegments();
-  const router = useRouter();
+  const segments     = useSegments();
+  const router       = useRouter();
+  // Guard against multiple in-flight navigations causing a redirect loop
+  const isNavigating = useRef(false);
+
+  // initialize is a stable Zustand v4 action reference — empty deps is correct.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { initialize(); }, []);
 
   useEffect(() => {
-    initialize();
-  }, [initialize]);
+    if (!isReady || isNavigating.current) return;
 
-  useEffect(() => {
-    if (!isReady) return;
+    const path   = (segments as string[]).join('/');
+    const inAuth = path.startsWith('auth');
+    const inApp  = path.startsWith('(app)');
+    const isRoot = segments.length === 0;
 
-    const stringSegments = segments as string[];
-    const isRoot = stringSegments.length === 0;
-    const inAuthGroup = !isRoot && stringSegments[0] === 'auth';
+    let target: string | null = null;
 
     if (!hasPinSetup) {
-      // First time launch -> Setup
-      if (segments.join('/') !== 'auth/setup') {
-        router.replace('/auth/setup');
-      }
+      // First launch — must set up PIN
+      if (path !== 'auth/setup') target = '/auth/setup';
     } else if (!isAuthenticated) {
-      // Has PIN but not logged in -> Login
-      if (segments.join('/') !== 'auth/login' && segments.join('/') !== 'auth/recovery') {
-        router.replace('/auth/login');
+      // PIN exists but not unlocked
+      if (path !== 'auth/login' && path !== 'auth/recovery') {
+        target = '/auth/login';
       }
-    } else if (isAuthenticated) {
-      // Logged in but still in auth group -> App (Dashboard)
-      if (inAuthGroup || isRoot) {
-        router.replace('/(app)/dashboard');
-      }
+    } else {
+      // Authenticated — redirect away from auth screens
+      if (inAuth || isRoot) target = '/(app)/dashboard';
+    }
+
+    if (target) {
+      isNavigating.current = true;
+      router.replace(target as never);
+      // Allow next navigation check after transition settles
+      setTimeout(() => { isNavigating.current = false; }, 600);
     }
   }, [isReady, isAuthenticated, hasPinSetup, segments]);
 
   if (!isReady) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#0000ff" />
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f9fafb' }}>
+        <ActivityIndicator size="large" color="#01696f" />
       </View>
     );
   }

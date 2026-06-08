@@ -6,17 +6,20 @@ interface AuthState {
   isAuthenticated: boolean;
   hasPinSetup: boolean;
   biometricEnabled: boolean;
-  
-  // Actions
   initialize: () => Promise<void>;
   login: (pin?: string) => Promise<boolean>;
   loginWithBiometrics: () => Promise<boolean>;
   logout: () => void;
-  setupPin: (pin: string, questionId: string, answer: string, enableBiometric: boolean) => Promise<void>;
+  setupPin: (
+    pin: string,
+    questionId: string,
+    answer: string,
+    enableBiometric: boolean
+  ) => Promise<void>;
   resetPin: (newPin: string) => Promise<void>;
 }
 
-export const useAuthStore = create<AuthState>((set, get) => ({
+export const useAuthStore = create<AuthState>((set) => ({
   isReady: false,
   isAuthenticated: false,
   hasPinSetup: false,
@@ -24,58 +27,39 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   initialize: async () => {
     try {
-      const hasPin = await authService.hasPinSetup();
+      const hasPin     = await authService.hasPinSetup();
       const bioEnabled = await authService.isBiometricEnabled();
-      set({ 
-        hasPinSetup: hasPin, 
-        biometricEnabled: bioEnabled,
-        isReady: true 
-      });
+      set({ hasPinSetup: hasPin, biometricEnabled: bioEnabled, isReady: true });
     } catch (e) {
-      console.error('Error initializing auth store:', e);
+      console.error('[AuthStore] initialize error:', e);
       set({ isReady: true });
     }
   },
 
   login: async (pin?: string) => {
-    if (pin) {
-      const isValid = await authService.verifyPin(pin);
-      if (isValid) {
-        set({ isAuthenticated: true });
-        return true;
-      }
-      return false;
-    }
+    if (!pin) return false;
+    const isValid = await authService.verifyPin(pin);
+    if (isValid) { set({ isAuthenticated: true }); return true; }
     return false;
   },
 
   loginWithBiometrics: async () => {
     const success = await authService.authenticateBiometric();
-    if (success) {
-      set({ isAuthenticated: true });
-      return true;
-    }
+    if (success) { set({ isAuthenticated: true }); return true; }
     return false;
   },
 
-  logout: () => {
-    set({ isAuthenticated: false });
-  },
+  logout: () => set({ isAuthenticated: false }),
 
-  setupPin: async (pin: string, questionId: string, answer: string, enableBiometric: boolean) => {
+  setupPin: async (pin, questionId, answer, enableBiometric) => {
     await authService.setPin(pin);
     await authService.setSecurityQuestion(questionId, answer);
     await authService.setBiometricEnabled(enableBiometric);
-    
-    set({
-      hasPinSetup: true,
-      biometricEnabled: enableBiometric,
-      isAuthenticated: true // Log them in immediately after setup
-    });
+    set({ hasPinSetup: true, biometricEnabled: enableBiometric, isAuthenticated: true });
   },
 
-  resetPin: async (newPin: string) => {
+  resetPin: async (newPin) => {
     await authService.setPin(newPin);
     set({ isAuthenticated: true });
-  }
+  },
 }));

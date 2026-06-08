@@ -2,13 +2,17 @@
  * Local notification service
  * Schedules all due reminders and budget alerts using expo-notifications.
  * No push server — all notifications are local / device-only.
+ *
+ * FIX: notification_ids stored as JSON array per recurring_entry.
+ * cancelEntryNotifications() MUST be called before rescheduling to prevent
+ * stale duplicate notifications accumulating.
  */
 
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { NotificationType } from '../constants/enums';
+import { getDB } from '../db';
 
-// Configure foreground behaviour
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
@@ -17,8 +21,7 @@ Notifications.setNotificationHandler({
   }),
 });
 
-// ─── Permission ──────────────────────────────────────────────────────────────
-
+// ─── Permission ───────────────────────────────────────────────────────────────
 export async function requestNotificationPermission(): Promise<boolean> {
   const { status } = await Notifications.requestPermissionsAsync();
   if (Platform.OS === 'android') {
@@ -35,11 +38,76 @@ export async function requestNotificationPermission(): Promise<boolean> {
   return status === 'granted';
 }
 
-// ─── Schedule helpers ─────────────────────────────────────────────────────────
+// ─── Deduplication helpers ────────────────────────────────────────────────────
+
+/** Cancel ALL existing notifications for a recurring_entry and clear stored IDs. */
+export async function cancelEntryNotifications(entryId: number): Promise<void> {
+  const db = getDB();
+  const row = await db.getFirstAsync<{ notification_ids: string }>(
+    'SELECT notification_ids FROM recurring_entries WHERE id = ?',
+    [entryId]
+  );
+  if (row?.notification_ids) {
+    try {
+      const ids: string[] = JSON.parse(row.notification_ids);
+      for (const id of ids) {
+        await Notifications.cancelScheduledNotificationAsync(id);
+      }
+    } catch { /* invalid JSON — safe to ignore */ }
+  }
+  await db.runAsync(
+    'UPDATE recurring_entries SET notification_ids = ? WHERE id = ?',
+    ['[]', entryId]
+  );
+}
+
+async function appendNotificationId(entryId: number, newId: string): Promise<void> {
+  const db = getDB();
+  const row = await db.getFirstAsync<{ notification_ids: string }>(
+    'SELECT notification_ids FROM recurring_entries WHERE id = ?',
+    [entryId]
+  );
+  let ids: string[] = [];
+  try { ids = JSON.parse(row?.notification_ids ?? '[]'); } catch { ids = []; }
+  ids.push(newId);
+  await db.runAsync(
+    'UPDATE recurring_entries SET notification_ids = ? WHERE id = ?',
+    [JSON.stringify(ids), entryId]
+  );
+}
+
+// ─── Main entry-point: schedule all 3 notifications for an entry ──────────────
 
 /**
- * Schedule a "due soon" notification N days before the due date.
+ * Call this whenever a recurring_entry is created or its due_date changes.
+ * Cancels stale notifications first, then schedules fresh ones.
  */
+export async function scheduleAllNotificationsForEntry(
+  entryId: number,
+  name: string,
+  amount: number | null,
+  dueDate: Date,
+  leadDays: number,
+  remindOnDue: boolean
+): Promise<void> {
+  await cancelEntryNotifications(entryId);
+
+  if (leadDays > 0) {
+    const id = await scheduleDueSoonNotification(entryId, name, amount, dueDate, leadDays);
+    if (id) await appendNotificationId(entryId, id);
+  }
+
+  if (remindOnDue) {
+    const id = await scheduleDueTodayNotification(entryId, name, amount, dueDate);
+    if (id) await appendNotificationId(entryId, id);
+  }
+
+  const overdueId = await scheduleOverdueNotification(entryId, name, dueDate);
+  if (overdueId) await appendNotificationId(entryId, overdueId);
+}
+
+// ─── Individual schedulers ────────────────────────────────────────────────────
+
 export async function scheduleDueSoonNotification(
   entryId: number,
   name: string,
@@ -49,13 +117,11 @@ export async function scheduleDueSoonNotification(
 ): Promise<string | null> {
   const triggerDate = new Date(dueDate);
   triggerDate.setDate(triggerDate.getDate() - leadDays);
-  triggerDate.setHours(9, 0, 0, 0); // 9 AM
-
-  if (triggerDate <= new Date()) return null; // already past
+  triggerDate.setHours(9, 0, 0, 0);
+  if (triggerDate <= new Date()) return null;
 
   const amountStr = amount ? `₹${amount.toLocaleString('en-IN')}` : '';
-
-  const id = await Notifications.scheduleNotificationAsync({
+  return await Notifications.scheduleNotificationAsync({
     content: {
       title: `⏰ Payment due in ${leadDays} day${leadDays > 1 ? 's' : ''}`,
       body: `${name}${amountStr ? ' — ' + amountStr : ''} is due on ${dueDate.toLocaleDateString('en-IN')}`,
@@ -64,12 +130,8 @@ export async function scheduleDueSoonNotification(
     },
     trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: triggerDate },
   });
-  return id;
 }
 
-/**
- * Schedule a "due today" notification on the due date.
- */
 export async function scheduleDueTodayNotification(
   entryId: number,
   name: string,
@@ -77,13 +139,11 @@ export async function scheduleDueTodayNotification(
   dueDate: Date
 ): Promise<string | null> {
   const triggerDate = new Date(dueDate);
-  triggerDate.setHours(8, 0, 0, 0); // 8 AM on due date
-
+  triggerDate.setHours(8, 0, 0, 0);
   if (triggerDate <= new Date()) return null;
 
   const amountStr = amount ? `₹${amount.toLocaleString('en-IN')}` : '';
-
-  const id = await Notifications.scheduleNotificationAsync({
+  return await Notifications.scheduleNotificationAsync({
     content: {
       title: `🔴 Payment due today`,
       body: `${name}${amountStr ? ' — ' + amountStr : ''} is due today. Tap to mark as paid.`,
@@ -92,12 +152,8 @@ export async function scheduleDueTodayNotification(
     },
     trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: triggerDate },
   });
-  return id;
 }
 
-/**
- * Schedule an overdue notification 1 day after the due date.
- */
 export async function scheduleOverdueNotification(
   entryId: number,
   name: string,
@@ -106,10 +162,9 @@ export async function scheduleOverdueNotification(
   const triggerDate = new Date(dueDate);
   triggerDate.setDate(triggerDate.getDate() + 1);
   triggerDate.setHours(9, 0, 0, 0);
-
   if (triggerDate <= new Date()) return null;
 
-  const id = await Notifications.scheduleNotificationAsync({
+  return await Notifications.scheduleNotificationAsync({
     content: {
       title: `⚠️ Payment Overdue`,
       body: `${name} was due on ${dueDate.toLocaleDateString('en-IN')} and is still unpaid.`,
@@ -118,12 +173,10 @@ export async function scheduleOverdueNotification(
     },
     trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: triggerDate },
   });
-  return id;
 }
 
-/**
- * Send an immediate budget warning notification.
- */
+// ─── Budget alerts (immediate) ────────────────────────────────────────────────
+
 export async function sendBudgetWarningNotification(
   budgetId: number,
   categoryName: string,
@@ -136,13 +189,10 @@ export async function sendBudgetWarningNotification(
       data: { type: NotificationType.BUDGET_WARNING, budgetId },
       channelId: 'budget',
     },
-    trigger: null, // immediate
+    trigger: null,
   });
 }
 
-/**
- * Send an immediate budget exceeded notification.
- */
 export async function sendBudgetExceededNotification(
   budgetId: number,
   categoryName: string
@@ -158,9 +208,6 @@ export async function sendBudgetExceededNotification(
   });
 }
 
-/**
- * Cancel a previously scheduled notification by ID.
- */
 export async function cancelNotification(notificationId: string): Promise<void> {
   await Notifications.cancelScheduledNotificationAsync(notificationId);
 }

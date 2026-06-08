@@ -12,6 +12,10 @@ export function getDB(): SQLite.SQLiteDatabase {
 
 export async function initDB(): Promise<void> {
   const db = getDB();
+  // PRAGMAs MUST be run separately — expo-sqlite v16 does not support
+  // mixing PRAGMA statements inside a multi-statement execAsync block.
+  await db.execAsync('PRAGMA journal_mode = WAL;');
+  await db.execAsync('PRAGMA foreign_keys = ON;');
   await db.execAsync(CREATE_TABLES_SQL);
   await db.execAsync(SEED_DEFAULTS_SQL);
   console.log('[DB] Initialized successfully');
