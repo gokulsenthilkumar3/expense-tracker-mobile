@@ -36,11 +36,14 @@
         {
           "icon": "./assets/notification-icon.png",
           "color": "#01696f",
-          "sounds": ["./assets/notification.wav"]
+          "sounds": [
+            "./assets/notification.wav"
+          ]
         }
       ],
       "expo-local-authentication",
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-asset"
     ],
     "scheme": "expensetrackerapp"
   }

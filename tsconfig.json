@@ -1,6 +1,8 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
+    "forceConsistentCasingInFileNames": true,
+    "jsx": "react-native",
     "strict": true,
     "baseUrl": ".",
     "paths": {
