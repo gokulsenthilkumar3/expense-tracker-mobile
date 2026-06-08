@@ -15,7 +15,9 @@ export default function RootLayout() {
   useEffect(() => {
     if (!isReady) return;
 
-    const inAuthGroup = segments[0] === 'auth';
+    const stringSegments = segments as string[];
+    const isRoot = stringSegments.length === 0;
+    const inAuthGroup = !isRoot && stringSegments[0] === 'auth';
 
     if (!hasPinSetup) {
       // First time launch -> Setup
@@ -29,7 +31,7 @@ export default function RootLayout() {
       }
     } else if (isAuthenticated) {
       // Logged in but still in auth group -> App (Dashboard)
-      if (inAuthGroup || segments.length === 0) {
+      if (inAuthGroup || isRoot) {
         router.replace('/(app)/dashboard');
       }
     }
