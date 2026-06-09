@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { authService } from '../services/auth';
+import { initDB } from '../db';
 
 interface AuthState {
   isReady: boolean;

@@ -28,6 +28,14 @@ export default function RootLayout() {
       // First launch — must set up PIN
       if (path !== 'auth/setup') target = '/auth/setup';
     } else if (!isAuthenticated) {
+      // Has PIN but not logged in -> Login
+      if (segments.join('/') !== 'auth/login' && segments.join('/') !== 'auth/recovery') {
+        router.replace('/auth/login');
+      }
+    } else if (isAuthenticated) {
+      // Logged in but still in auth group -> App (Dashboard)
+      if (inAuthGroup || isRoot) {
+        router.replace('/(app)/(tabs)/dashboard');
       // PIN exists but not unlocked
       if (path !== 'auth/login' && path !== 'auth/recovery') {
         target = '/auth/login';
