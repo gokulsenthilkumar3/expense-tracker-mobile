@@ -1,23 +1,12 @@
 /**
- * SQLite schema initialization
- * Run once on app launch via initDB()
+ * SQLite schema
+ * NOTE: PRAGMAs are intentionally NOT included here.
+ * They must be run separately via db.execAsync() before this DDL
+ * because expo-sqlite v16 does not allow mixing PRAGMAs inside a
+ * multi-statement execAsync block reliably.
  */
 
 export const CREATE_TABLES_SQL = `
-  PRAGMA journal_mode = WAL;
-  PRAGMA foreign_keys = ON;
-
-  CREATE TABLE IF NOT EXISTS users (
-    id              INTEGER PRIMARY KEY,
-    name            TEXT NOT NULL,
-    pin_hash        TEXT,
-    security_q      TEXT,
-    security_a_hash TEXT,
-    currency        TEXT DEFAULT 'INR',
-    locale          TEXT DEFAULT 'en-IN',
-    created_at      TEXT DEFAULT (datetime('now'))
-  );
-
   CREATE TABLE IF NOT EXISTS categories (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     name       TEXT NOT NULL,
@@ -72,25 +61,25 @@ export const CREATE_TABLES_SQL = `
   );
 
   CREATE TABLE IF NOT EXISTS recurring_entries (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    template_id     INTEGER NOT NULL REFERENCES recurring_templates(id),
-    due_date        TEXT NOT NULL,
-    actual_amount   REAL,
-    status          TEXT DEFAULT 'pending' CHECK(status IN ('pending','paid','missed','skipped')),
-    paid_date       TEXT,
-    note            TEXT,
-    notification_id TEXT,
-    created_at      TEXT DEFAULT (datetime('now'))
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    template_id      INTEGER NOT NULL REFERENCES recurring_templates(id),
+    due_date         TEXT NOT NULL,
+    actual_amount    REAL,
+    status           TEXT DEFAULT 'pending' CHECK(status IN ('pending','paid','missed','skipped')),
+    paid_date        TEXT,
+    note             TEXT,
+    notification_ids TEXT DEFAULT '[]',
+    created_at       TEXT DEFAULT (datetime('now'))
   );
 
   CREATE TABLE IF NOT EXISTS budgets (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     month       TEXT NOT NULL,
-    category_id INTEGER REFERENCES categories(id),
+    category_id INTEGER,
     amount      REAL NOT NULL,
     alert_pct   INTEGER DEFAULT 80,
     created_at  TEXT DEFAULT (datetime('now')),
-    UNIQUE(month, category_id)
+    UNIQUE(month, COALESCE(category_id, 0))
   );
 
   CREATE TABLE IF NOT EXISTS notifications_log (
@@ -120,18 +109,18 @@ export const SEED_DEFAULTS_SQL = `
     (6, 'Cheque', 1);
 
   INSERT OR IGNORE INTO categories (id, name, icon, color, is_system) VALUES
-    (1,  'Food & Dining',       '🍽️',  '#e67e22', 1),
-    (2,  'Transport',           '🚗',  '#2980b9', 1),
-    (3,  'Utilities',           '💡',  '#f1c40f', 1),
-    (4,  'Rent & Housing',      '🏠',  '#27ae60', 1),
-    (5,  'Healthcare',          '🏥',  '#e74c3c', 1),
-    (6,  'Education',           '📚',  '#8e44ad', 1),
-    (7,  'Entertainment',       '🎬',  '#16a085', 1),
-    (8,  'Loan / EMI',          '🏦',  '#c0392b', 1),
-    (9,  'Chit Fund',           '💰',  '#d35400', 1),
-    (10, 'Subscriptions',       '📱',  '#2c3e50', 1),
-    (11, 'Groceries',           '🛒',  '#7f8c8d', 1),
-    (12, 'Personal Care',       '🧴',  '#f39c12', 1),
-    (13, 'Savings / Investment','💹',  '#1abc9c', 1),
-    (14, 'Miscellaneous',       '📦',  '#95a5a6', 1);
+    (1,  'Food & Dining',        '🍽️',  '#e67e22', 1),
+    (2,  'Transport',            '🚗',  '#2980b9', 1),
+    (3,  'Utilities',            '💡',  '#f1c40f', 1),
+    (4,  'Rent & Housing',       '🏠',  '#27ae60', 1),
+    (5,  'Healthcare',           '🏥',  '#e74c3c', 1),
+    (6,  'Education',            '📚',  '#8e44ad', 1),
+    (7,  'Entertainment',        '🎬',  '#16a085', 1),
+    (8,  'Loan / EMI',           '🏦',  '#c0392b', 1),
+    (9,  'Chit Fund',            '💰',  '#d35400', 1),
+    (10, 'Subscriptions',        '📱',  '#2c3e50', 1),
+    (11, 'Groceries',            '🛒',  '#7f8c8d', 1),
+    (12, 'Personal Care',        '🧴',  '#f39c12', 1),
+    (13, 'Savings / Investment', '💹',  '#1abc9c', 1),
+    (14, 'Miscellaneous',        '📦',  '#95a5a6', 1);
 `;
