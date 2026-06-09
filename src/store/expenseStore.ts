@@ -11,6 +11,7 @@ import {
   deleteExpense,
   deleteRecurringTemplate,
   markRecurringPaid,
+  updateExpense,
 } from '../db/queries';
 
 interface ExpenseState {
@@ -20,6 +21,7 @@ interface ExpenseState {
   error: string | null;
   fetchData: () => Promise<void>;
   addExpense: (expense: ExpenseInsert) => Promise<void>;
+  editExpense: (id: number, expense: ExpenseInsert) => Promise<void>;
   removeExpense: (id: number) => Promise<void>;
   addRecurringTemplate: (template: RecurringTemplateInsert) => Promise<void>;
   removeRecurringTemplate: (id: number) => Promise<void>;
@@ -52,6 +54,16 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
       await get().fetchData();
     } catch (error: any) {
       set({ error: error.message || 'Failed to add expense', isLoading: false });
+    }
+  },
+
+  editExpense: async (id, expense) => {
+    set({ isLoading: true, error: null });
+    try {
+      await updateExpense(id, expense);
+      await get().fetchData();
+    } catch (error: any) {
+      set({ error: error.message || 'Failed to update expense', isLoading: false });
     }
   },
 
