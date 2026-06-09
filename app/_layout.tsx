@@ -32,7 +32,7 @@ export default function RootLayout() {
     } else if (isAuthenticated) {
       // Logged in but still in auth group -> App (Dashboard)
       if (inAuthGroup || isRoot) {
-        router.replace('/(app)/dashboard');
+        router.replace('/(app)/(tabs)/dashboard');
       }
     }
   }, [isReady, isAuthenticated, hasPinSetup, segments]);

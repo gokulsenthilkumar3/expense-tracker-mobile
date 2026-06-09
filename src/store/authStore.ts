@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { authService } from '../services/auth';
+import { initDB } from '../db';
 
 interface AuthState {
   isReady: boolean;
@@ -24,6 +25,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   initialize: async () => {
     try {
+      await initDB();
       const hasPin = await authService.hasPinSetup();
       const bioEnabled = await authService.isBiometricEnabled();
       set({ 

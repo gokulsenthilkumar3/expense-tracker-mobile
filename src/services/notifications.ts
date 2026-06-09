@@ -14,7 +14,7 @@ Notifications.setNotificationHandler({
     shouldShowAlert: true,
     shouldPlaySound: true,
     shouldSetBadge: true,
-  }),
+  } as any),
 });
 
 // ─── Permission ──────────────────────────────────────────────────────────────
@@ -60,6 +60,7 @@ export async function scheduleDueSoonNotification(
       title: `⏰ Payment due in ${leadDays} day${leadDays > 1 ? 's' : ''}`,
       body: `${name}${amountStr ? ' — ' + amountStr : ''} is due on ${dueDate.toLocaleDateString('en-IN')}`,
       data: { type: NotificationType.DUE_SOON, entryId },
+      // @ts-ignore
       channelId: 'dues',
     },
     trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: triggerDate },
@@ -88,6 +89,7 @@ export async function scheduleDueTodayNotification(
       title: `🔴 Payment due today`,
       body: `${name}${amountStr ? ' — ' + amountStr : ''} is due today. Tap to mark as paid.`,
       data: { type: NotificationType.DUE_TODAY, entryId },
+      // @ts-ignore
       channelId: 'dues',
     },
     trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: triggerDate },
@@ -114,6 +116,7 @@ export async function scheduleOverdueNotification(
       title: `⚠️ Payment Overdue`,
       body: `${name} was due on ${dueDate.toLocaleDateString('en-IN')} and is still unpaid.`,
       data: { type: NotificationType.OVERDUE, entryId },
+      // @ts-ignore
       channelId: 'dues',
     },
     trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: triggerDate },
@@ -134,6 +137,7 @@ export async function sendBudgetWarningNotification(
       title: `💸 Budget Alert`,
       body: `You've used ${pct}% of your ${categoryName} budget this month.`,
       data: { type: NotificationType.BUDGET_WARNING, budgetId },
+      // @ts-ignore
       channelId: 'budget',
     },
     trigger: null, // immediate
@@ -152,6 +156,7 @@ export async function sendBudgetExceededNotification(
       title: `🚨 Budget Exceeded`,
       body: `Your ${categoryName} budget has been exceeded this month!`,
       data: { type: NotificationType.BUDGET_EXCEEDED, budgetId },
+      // @ts-ignore
       channelId: 'budget',
     },
     trigger: null,

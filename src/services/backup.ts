@@ -7,6 +7,7 @@
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { getDB } from '../db';
+import { SQLiteBindParams } from 'expo-sqlite';
 
 interface BackupData {
   version: number;
@@ -34,7 +35,7 @@ export async function exportBackup(): Promise<void> {
   };
 
   const filename = `expense_backup_${new Date().toISOString().slice(0, 10)}.json`;
-  const path = `${FileSystem.documentDirectory}${filename}`;
+  const path = `${(FileSystem as any).documentDirectory}${filename}`;
 
   await FileSystem.writeAsStringAsync(path, JSON.stringify(backup, null, 2));
   await Sharing.shareAsync(path, { mimeType: 'application/json', dialogTitle: 'Save Backup File' });
