@@ -1,468 +1,239 @@
+import { useState, useEffect, useCallback } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  Alert,
-  SafeAreaView,
-  ScrollView,
-  ActivityIndicator,
+  View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity,
+  SafeAreaView, Alert, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
-import { useState, useEffect } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useExpenseStore } from '../../../src/store/expenseStore';
 import { useCategoryStore } from '../../../src/store/categoryStore';
-import { Expense, ExpenseInsert } from '../../../src/db/queries';
-import { Pencil, Trash2, Check, X, Calendar, Tag, CreditCard, FileText } from 'lucide-react-native';
-
-// ─── helpers ─────────────────────────────────────────────────────────────────
-
-function formatDate(d: string) {
-  if (!d) return '—';
-  const dt = new Date(d + 'T00:00:00');
-  return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-}
-
-function formatAmount(n: number) {
-  return '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function todayStr() {
-  return new Date().toISOString().split('T')[0];
-}
-
-// ─── sub-components ───────────────────────────────────────────────────────────
-
-function Label({ text, required }: { text: string; required?: boolean }) {
-  return (
-    <Text style={{ fontSize: 13, fontWeight: '600', color: '#64748b', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-      {text}{required && <Text style={{ color: '#dc2626' }}> *</Text>}
-    </Text>
-  );
-}
-
-function DetailRow({
-  icon, label, value, accent,
-}: {
-  icon: React.ReactNode; label: string; value: string; accent?: string;
-}) {
-  return (
-    <View style={{
-      flexDirection: 'row', alignItems: 'center',
-      paddingVertical: 14,
-      borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
-    }}>
-      <View style={{
-        width: 36, height: 36, borderRadius: 10,
-        backgroundColor: '#f1f5f9',
-        justifyContent: 'center', alignItems: 'center',
-        marginRight: 14,
-      }}>
-        {icon}
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={{ fontSize: 12, color: '#94a3b8', marginBottom: 2 }}>{label}</Text>
-        <Text style={{ fontSize: 15, fontWeight: '500', color: accent ?? '#0f172a' }}>{value}</Text>
-      </View>
-    </View>
-  );
-}
-
-function SectionCard({ children }: { children: React.ReactNode }) {
-  return (
-    <View style={{
-      backgroundColor: '#ffffff', borderRadius: 16, padding: 16,
-      marginBottom: 16,
-      shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.05, shadowRadius: 6, elevation: 2,
-    }}>
-      {children}
-    </View>
-  );
-}
-
-function ChipGroup<T extends string>({
-  options, selected, onSelect, activeColor = '#2563eb',
-}: {
-  options: { value: T; label: string }[];
-  selected: T | null;
-  onSelect: (v: T) => void;
-  activeColor?: string;
-}) {
-  return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-      {options.map(o => (
-        <TouchableOpacity
-          key={o.value}
-          onPress={() => onSelect(o.value)}
-          style={{
-            paddingVertical: 9, paddingHorizontal: 14, borderRadius: 20,
-            backgroundColor: selected === o.value ? activeColor : '#e2e8f0',
-          }}
-        >
-          <Text style={{ fontSize: 13, fontWeight: '600', color: selected === o.value ? '#fff' : '#475569' }}>
-            {o.label}
-          </Text>
-        </TouchableOpacity>
-      ))}
-    </View>
-  );
-}
-
-// ─── main screen ──────────────────────────────────────────────────────────────
+import { formatINR } from '../../../src/utils/currency';
 
 export default function ExpenseDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const router  = useRouter();
-  const { expenses, removeExpense, editExpense } = useExpenseStore();
-  const { categories, paymentModes, fetchData: fetchCats } = useCategoryStore();
+  const router = useRouter();
+  const { expenses, updateExpense, deleteExpense } = useExpenseStore();
+  const { categories, paymentModes } = useCategoryStore();
 
-  const [isEdit,    setIsEdit]    = useState(false);
-  const [isSaving,  setIsSaving]  = useState(false);
-  const [isDeleting,setIsDeleting]= useState(false);
+  const expense = expenses.find(e => e.id === Number(id));
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  // find the expense in store
-  const expense: Expense | undefined = expenses.find(e => e.id === Number(id));
-
-  // edit fields (pre-filled when entering edit mode)
-  const [amount,        setAmount]        = useState('');
-  const [date,          setDate]          = useState('');
-  const [categoryId,    setCategoryId]    = useState<number | null>(null);
+  // Edit fields
+  const [name, setName] = useState('');
+  const [amount, setAmount] = useState('');
+  const [date, setDate] = useState('');
+  const [note, setNote] = useState('');
+  const [categoryId, setCategoryId] = useState<number | null>(null);
   const [paymentModeId, setPaymentModeId] = useState<number | null>(null);
-  const [note,          setNote]          = useState('');
-  const [tags,          setTags]          = useState('');
 
-  useEffect(() => { fetchCats(); }, []);
+  useEffect(() => {
+    if (expense) {
+      setName(expense.name);
+      setAmount(expense.amount.toString());
+      setDate(expense.date);
+      setNote(expense.note ?? '');
+      setCategoryId(expense.category_id ?? null);
+      setPaymentModeId(expense.payment_mode_id ?? null);
+    }
+  }, [expense]);
 
-  // Populate edit fields when entering edit mode
-  const enterEdit = () => {
-    if (!expense) return;
-    setAmount(String(expense.amount));
-    setDate(expense.date);
-    setCategoryId(expense.category_id);
-    setPaymentModeId(expense.payment_mode_id);
-    setNote(expense.note ?? '');
-    setTags(expense.tags ?? '');
-    setIsEdit(true);
-  };
-
-  const cancelEdit = () => setIsEdit(false);
-
-  // ── helpers
-  const getCategoryName = (cid: number | null) =>
-    cid ? (categories.find(c => c.id === cid)?.name ?? 'Unknown') : 'Uncategorized';
-  const getPaymentName = (pid: number | null) =>
-    pid ? (paymentModes.find(p => p.id === pid)?.name ?? 'Unknown') : 'Not specified';
-
-  // ── save edit
   const handleSave = async () => {
-    if (!expense) return;
-    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
-      Alert.alert('Validation', 'Please enter a valid amount.'); return;
-    }
-    if (!date.match(/^\d{4}-\d{2}-\d{2}$/)) {
-      Alert.alert('Validation', 'Date must be in YYYY-MM-DD format.'); return;
-    }
-    setIsSaving(true);
-    try {
-      await editExpense(expense.id, {
-        amount:          Number(amount),
-        date,
-        category_id:     categoryId,
-        subcategory_id:  expense.subcategory_id,
-        payment_mode_id: paymentModeId,
-        note:            note.trim() || null,
-        tags:            tags.trim() || null,
-      });
-      setIsEdit(false);
-    } catch {
-      Alert.alert('Error', 'Failed to update expense.');
-    } finally {
-      setIsSaving(false);
-    }
+    if (!name.trim()) { Alert.alert('Validation', 'Name is required'); return; }
+    const amt = parseFloat(amount);
+    if (isNaN(amt) || amt <= 0) { Alert.alert('Validation', 'Enter a valid amount'); return; }
+    setSaving(true);
+    await updateExpense(Number(id), {
+      name: name.trim(),
+      amount: amt,
+      date,
+      note: note.trim() || null,
+      category_id: categoryId,
+      payment_mode_id: paymentModeId,
+    });
+    setSaving(false);
+    setEditing(false);
   };
 
-  // ── delete
   const handleDelete = () => {
-    if (!expense) return;
-    Alert.alert(
-      'Delete Expense',
-      `Delete this ₹${expense.amount} expense? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete', style: 'destructive',
-          onPress: async () => {
-            setIsDeleting(true);
-            try {
-              await removeExpense(expense.id);
-              router.back();
-            } catch {
-              Alert.alert('Error', 'Failed to delete.');
-              setIsDeleting(false);
-            }
-          },
+    Alert.alert('Delete Expense', `Delete "${expense?.name}"? This cannot be undone.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive', onPress: async () => {
+          await deleteExpense(Number(id));
+          router.back();
         },
-      ]
-    );
+      },
+    ]);
   };
 
-  // ── loading / not found
   if (!expense) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#f8fafc', justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#2563eb" />
-        <Text style={{ color: '#64748b', marginTop: 12 }}>Loading expense…</Text>
+      <SafeAreaView style={styles.container}>
+        <View style={styles.notFound}>
+          <Text style={styles.notFoundIcon}>🔍</Text>
+          <Text style={styles.notFoundTitle}>Expense not found</Text>
+          <TouchableOpacity onPress={() => router.back()}>
+            <Text style={styles.backLink}>Go back</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
 
-  const parentCategories = categories.filter(c => !c.parent_id);
-
-  return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#f8fafc' }}>
-
-      {/* ── Header bar ── */}
-      <View style={{
-        flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12,
-        backgroundColor: '#ffffff',
-        borderBottomWidth: 1, borderBottomColor: '#e2e8f0',
-      }}>
-        <TouchableOpacity onPress={() => router.back()} style={{ marginRight: 12, padding: 6 }}>
-          <X {...{ size: 20, color: '#64748b' } as any} />
-        </TouchableOpacity>
-        <Text style={{ flex: 1, fontSize: 17, fontWeight: '700', color: '#0f172a' }}>
-          {isEdit ? 'Edit Expense' : 'Expense Detail'}
-        </Text>
-        {!isEdit ? (
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            <TouchableOpacity
-              onPress={enterEdit}
-              style={{
-                flexDirection: 'row', alignItems: 'center', gap: 6,
-                backgroundColor: '#eff6ff', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 20,
-              }}
-            >
-              <Pencil {...{ size: 14, color: '#2563eb' } as any} />
-              <Text style={{ fontSize: 13, fontWeight: '600', color: '#2563eb' }}>Edit</Text>
+  if (!editing) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.viewHeader}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <Text style={styles.backBtnText}>‹ Back</Text>
+          </TouchableOpacity>
+          <View style={styles.viewHeaderActions}>
+            <TouchableOpacity style={styles.editBtn} onPress={() => setEditing(true)}>
+              <Text style={styles.editBtnText}>Edit</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              onPress={handleDelete}
-              disabled={isDeleting}
-              style={{
-                flexDirection: 'row', alignItems: 'center', gap: 6,
-                backgroundColor: '#fef2f2', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 20,
-              }}
-            >
-              {isDeleting
-                ? <ActivityIndicator size="small" color="#ef4444" />
-                : <Trash2 {...{ size: 14, color: '#ef4444' } as any} />}
-              <Text style={{ fontSize: 13, fontWeight: '600', color: '#ef4444' }}>Delete</Text>
+            <TouchableOpacity style={styles.deleteBtn} onPress={handleDelete}>
+              <Text style={styles.deleteBtnText}>Delete</Text>
             </TouchableOpacity>
           </View>
-        ) : (
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            <TouchableOpacity
-              onPress={cancelEdit}
-              style={{
-                paddingVertical: 8, paddingHorizontal: 14, borderRadius: 20,
-                backgroundColor: '#f1f5f9',
-              }}
-            >
-              <Text style={{ fontSize: 13, fontWeight: '600', color: '#64748b' }}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={handleSave}
-              disabled={isSaving}
-              style={{
-                flexDirection: 'row', alignItems: 'center', gap: 6,
-                paddingVertical: 8, paddingHorizontal: 14, borderRadius: 20,
-                backgroundColor: isSaving ? '#93c5fd' : '#2563eb',
-              }}
-            >
-              {isSaving
-                ? <ActivityIndicator size="small" color="#fff" />
-                : <Check {...{ size: 14, color: '#fff' } as any} />}
-              <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff' }}>Save</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </View>
-
-      <ScrollView
-        contentContainerStyle={{ padding: 20, paddingBottom: 40 }}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-
-        {/* ── Amount hero card ── */}
-        <View style={{
-          backgroundColor: '#1e293b',
-          borderRadius: 20,
-          padding: 28,
-          alignItems: 'center',
-          marginBottom: 20,
-          shadowColor: '#1e293b',
-          shadowOffset: { width: 0, height: 6 },
-          shadowOpacity: 0.3,
-          shadowRadius: 12,
-          elevation: 8,
-        }}>
-          {isEdit ? (
-            <TextInput
-              value={amount}
-              onChangeText={setAmount}
-              keyboardType="decimal-pad"
-              placeholder="0.00"
-              placeholderTextColor="#475569"
-              style={{
-                fontSize: 42, fontWeight: '800', color: '#f8fafc',
-                textAlign: 'center', borderBottomWidth: 2,
-                borderBottomColor: '#3b82f6', paddingBottom: 4, minWidth: 160,
-              }}
-            />
-          ) : (
-            <Text style={{ fontSize: 42, fontWeight: '800', color: '#f8fafc' }}>
-              {formatAmount(expense.amount)}
-            </Text>
-          )}
-          <Text style={{ fontSize: 13, color: '#64748b', marginTop: 6 }}>
-            Added {new Date(expense.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-          </Text>
         </View>
 
-        {/* ── VIEW mode: detail rows ── */}
-        {!isEdit && (
-          <SectionCard>
-            <DetailRow
-              icon={<Calendar {...{ size: 16, color: '#2563eb' } as any} />}
-              label="Date"
-              value={formatDate(expense.date)}
-            />
-            <DetailRow
-              icon={<Text style={{ fontSize: 14 }}>{categories.find(c => c.id === expense.category_id)?.icon ?? '📦'}</Text>}
-              label="Category"
-              value={getCategoryName(expense.category_id)}
-            />
-            <DetailRow
-              icon={<CreditCard {...{ size: 16, color: '#7c3aed' } as any} />}
-              label="Payment Mode"
-              value={getPaymentName(expense.payment_mode_id)}
-            />
-            {expense.note && (
-              <DetailRow
-                icon={<FileText {...{ size: 16, color: '#0891b2' } as any} />}
-                label="Note"
-                value={expense.note}
-              />
-            )}
-            {expense.tags && (
-              <DetailRow
-                icon={<Tag {...{ size: 16, color: '#d97706' } as any} />}
-                label="Tags"
-                value={expense.tags}
-              />
-            )}
-          </SectionCard>
-        )}
+        <ScrollView contentContainerStyle={styles.viewContent}>
+          <Text style={styles.viewAmount}>{formatINR(expense.amount)}</Text>
+          <Text style={styles.viewName}>{expense.name}</Text>
 
-        {/* ── EDIT mode: form fields ── */}
-        {isEdit && (
-          <>
-            {/* Date */}
-            <SectionCard>
-              <Label text="Date" required />
-              <TextInput
-                value={date}
-                onChangeText={setDate}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor="#94a3b8"
-                style={{
-                  backgroundColor: '#f8fafc', padding: 14, borderRadius: 12,
-                  fontSize: 15, borderWidth: 1, borderColor: '#e2e8f0', color: '#0f172a',
-                }}
-              />
-              <Text style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>e.g. {todayStr()}</Text>
-            </SectionCard>
-
-            {/* Category */}
-            <SectionCard>
-              <Label text="Category" />
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                {parentCategories.map(cat => (
-                  <TouchableOpacity
-                    key={cat.id}
-                    onPress={() => setCategoryId(cat.id === categoryId ? null : cat.id)}
-                    style={{
-                      paddingVertical: 9, paddingHorizontal: 14, borderRadius: 20,
-                      backgroundColor: categoryId === cat.id ? '#2563eb' : '#e2e8f0',
-                    }}
-                  >
-                    <Text style={{ fontSize: 13, fontWeight: '500', color: categoryId === cat.id ? '#fff' : '#475569' }}>
-                      {cat.icon} {cat.name}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </SectionCard>
-
-            {/* Payment Mode */}
-            <SectionCard>
-              <Label text="Payment Mode" />
-              <ChipGroup
-                options={paymentModes.map(p => ({ value: String(p.id) as any, label: p.name }))}
-                selected={paymentModeId !== null ? String(paymentModeId) as any : null}
-                onSelect={(v) => setPaymentModeId(Number(v))}
-                activeColor="#2563eb"
-              />
-            </SectionCard>
-
-            {/* Note */}
-            <SectionCard>
-              <Label text="Note" />
-              <TextInput
-                value={note}
-                onChangeText={setNote}
-                placeholder="What was this for?"
-                placeholderTextColor="#94a3b8"
-                multiline
-                numberOfLines={3}
-                style={{
-                  backgroundColor: '#f8fafc', padding: 14, borderRadius: 12,
-                  fontSize: 15, borderWidth: 1, borderColor: '#e2e8f0',
-                  color: '#0f172a', textAlignVertical: 'top', minHeight: 80,
-                }}
-              />
-            </SectionCard>
-
-            {/* Tags */}
-            <SectionCard>
-              <Label text="Tags (comma separated)" />
-              <TextInput
-                value={tags}
-                onChangeText={setTags}
-                placeholder="food, monthly, essential"
-                placeholderTextColor="#94a3b8"
-                style={{
-                  backgroundColor: '#f8fafc', padding: 14, borderRadius: 12,
-                  fontSize: 15, borderWidth: 1, borderColor: '#e2e8f0', color: '#0f172a',
-                }}
-              />
-            </SectionCard>
-          </>
-        )}
-
-        {/* ── Meta info ── */}
-        {!isEdit && (
-          <View style={{ padding: 16, backgroundColor: '#f8fafc', borderRadius: 12 }}>
-            <Text style={{ fontSize: 12, color: '#94a3b8', textAlign: 'center' }}>
-              ID #{expense.id}  •  Last updated {new Date(expense.updated_at).toLocaleDateString('en-IN')}
-            </Text>
+          <View style={styles.detailCard}>
+            <DetailRow label="Date" value={new Date(expense.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })} />
+            <DetailRow label="Category" value={expense.category_name ?? 'Uncategorized'} />
+            <DetailRow label="Payment Mode" value={expense.payment_mode_name ?? 'Not specified'} />
+            {expense.note && <DetailRow label="Note" value={expense.note} />}
+            <DetailRow label="Added" value={new Date(expense.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })} />
           </View>
-        )}
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
 
-      </ScrollView>
+  return (
+    <SafeAreaView style={styles.container}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+        <View style={styles.editNavBar}>
+          <TouchableOpacity onPress={() => setEditing(false)}>
+            <Text style={styles.cancelEditText}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={styles.editNavTitle}>Edit Expense</Text>
+          <TouchableOpacity onPress={handleSave} disabled={saving}>
+            {saving ? <ActivityIndicator size="small" color="#01696f" /> : <Text style={styles.saveEditText}>Save</Text>}
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+          <View style={styles.field}>
+            <Text style={styles.fieldLabel}>Name *</Text>
+            <TextInput style={styles.input} value={name} onChangeText={setName} autoFocus />
+          </View>
+
+          <View style={styles.field}>
+            <Text style={styles.fieldLabel}>Amount (₹) *</Text>
+            <TextInput style={styles.input} value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
+          </View>
+
+          <View style={styles.field}>
+            <Text style={styles.fieldLabel}>Date</Text>
+            <TextInput style={styles.input} value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" keyboardType="number-pad" />
+          </View>
+
+          <View style={styles.field}>
+            <Text style={styles.fieldLabel}>Category</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <TouchableOpacity
+                style={[styles.chip, categoryId === null && styles.chipActive]}
+                onPress={() => setCategoryId(null)}
+              >
+                <Text style={[styles.chipText, categoryId === null && styles.chipTextActive]}>None</Text>
+              </TouchableOpacity>
+              {categories.map(c => (
+                <TouchableOpacity
+                  key={c.id}
+                  style={[styles.chip, categoryId === c.id && styles.chipActive, { marginRight: 8 }]}
+                  onPress={() => setCategoryId(c.id)}
+                >
+                  <Text style={[styles.chipText, categoryId === c.id && styles.chipTextActive]}>{c.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+
+          <View style={styles.field}>
+            <Text style={styles.fieldLabel}>Payment Mode</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              {paymentModes.map(pm => (
+                <TouchableOpacity
+                  key={pm.id}
+                  style={[styles.chip, paymentModeId === pm.id && styles.chipActive, { marginRight: 8 }]}
+                  onPress={() => setPaymentModeId(pm.id)}
+                >
+                  <Text style={[styles.chipText, paymentModeId === pm.id && styles.chipTextActive]}>{pm.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+
+          <View style={styles.field}>
+            <Text style={styles.fieldLabel}>Note</Text>
+            <TextInput
+              style={[styles.input, { height: 80, textAlignVertical: 'top' }]}
+              value={note}
+              onChangeText={setNote}
+              placeholder="Optional note..."
+              multiline
+            />
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.detailRow}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={styles.detailValue}>{value}</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f8fafc' },
+  notFound: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  notFoundIcon: { fontSize: 48, marginBottom: 16 },
+  notFoundTitle: { fontSize: 18, fontWeight: '600', color: '#334155', marginBottom: 12 },
+  backLink: { fontSize: 15, color: '#01696f', fontWeight: '600' },
+  viewHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, backgroundColor: 'white', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  backBtn: { padding: 4 },
+  backBtnText: { fontSize: 17, color: '#01696f', fontWeight: '500' },
+  viewHeaderActions: { flexDirection: 'row', gap: 12 },
+  editBtn: { paddingHorizontal: 14, paddingVertical: 7, backgroundColor: '#e0f2f1', borderRadius: 20 },
+  editBtnText: { color: '#01696f', fontWeight: '600', fontSize: 14 },
+  deleteBtn: { paddingHorizontal: 14, paddingVertical: 7, backgroundColor: '#fff1f2', borderRadius: 20 },
+  deleteBtnText: { color: '#dc2626', fontWeight: '600', fontSize: 14 },
+  viewContent: { padding: 24, alignItems: 'center' },
+  viewAmount: { fontSize: 40, fontWeight: '800', color: '#01696f', marginBottom: 8 },
+  viewName: { fontSize: 20, fontWeight: '600', color: '#0f172a', marginBottom: 24 },
+  detailCard: { width: '100%', backgroundColor: 'white', borderRadius: 14, padding: 4 },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f8fafc' },
+  detailLabel: { fontSize: 13, color: '#94a3b8', fontWeight: '500', flex: 1 },
+  detailValue: { fontSize: 14, color: '#1e293b', fontWeight: '600', flex: 2, textAlign: 'right' },
+  editNavBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, backgroundColor: 'white', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  cancelEditText: { fontSize: 16, color: '#64748b', fontWeight: '500' },
+  editNavTitle: { fontSize: 17, fontWeight: '700', color: '#0f172a' },
+  saveEditText: { fontSize: 16, color: '#01696f', fontWeight: '700' },
+  scroll: { padding: 16, paddingBottom: 40 },
+  field: { marginBottom: 18 },
+  fieldLabel: { fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 8 },
+  input: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 10, padding: 14, fontSize: 16, color: '#0f172a', backgroundColor: 'white' },
+  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: 'white', borderWidth: 1, borderColor: '#e2e8f0', marginRight: 8 },
+  chipActive: { backgroundColor: '#01696f', borderColor: '#01696f' },
+  chipText: { fontSize: 13, color: '#64748b', fontWeight: '500' },
+  chipTextActive: { color: 'white', fontWeight: '700' },
+});

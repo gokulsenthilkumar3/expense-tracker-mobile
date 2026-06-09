@@ -1,632 +1,324 @@
+import { useState, useCallback } from 'react';
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  SafeAreaView,
-  ScrollView,
-  TextInput,
-  Alert,
-  Switch,
-  ActivityIndicator,
-  Modal,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput,
+  SafeAreaView, Alert, Switch, Modal, ActivityIndicator,
 } from 'react-native';
-import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'expo-router';
 import { useCategoryStore } from '../../../src/store/categoryStore';
 import { useAuthStore } from '../../../src/store/authStore';
-import {
-  addCategory, deleteCategory,
-  addPaymentMode, deletePaymentMode,
-  getCategories, getPaymentModes,
-} from '../../../src/db/queries';
-import * as FileSystem from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
-import * as DocumentPicker from 'expo-document-picker';
-import {
-  Tag, CreditCard, Shield, Download, Upload,
-  Info, ChevronRight, Trash2, Plus, X, Check,
-  Eye, EyeOff, LogOut,
-} from 'lucide-react-native';
-
-// ─── helpers ─────────────────────────────────────────────────────────────────
-
-const EMOJI_PRESETS = [
-  '🏠','🍔','🚗','💊','🎓','🛍','💡','📱','✈️','🎮',
-  '💰','🏋️','👗','🐾','🎁','📚','☕','🎵','🏥','🔧',
-  '💈','🌿','🧴','🎯','📦','🏦','🚌','🍕','🎬','💻',
-];
-
-const COLOR_PRESETS = [
-  '#ef4444','#f97316','#eab308','#22c55e','#14b8a6',
-  '#3b82f6','#8b5cf6','#ec4899','#64748b','#0ea5e9',
-];
-
-function SectionHeader({ title }: { title: string }) {
-  return (
-    <Text style={{
-      fontSize: 12, fontWeight: '700', color: '#94a3b8',
-      textTransform: 'uppercase', letterSpacing: 0.7,
-      marginTop: 28, marginBottom: 10,
-    }}>{title}</Text>
-  );
-}
-
-function SettingsRow({
-  icon, label, value, onPress, danger, rightElement,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value?: string;
-  onPress?: () => void;
-  danger?: boolean;
-  rightElement?: React.ReactNode;
-}) {
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      disabled={!onPress}
-      activeOpacity={onPress ? 0.7 : 1}
-      style={{
-        flexDirection: 'row', alignItems: 'center',
-        backgroundColor: '#ffffff',
-        paddingVertical: 15, paddingHorizontal: 16,
-        borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
-      }}
-    >
-      <View style={{ width: 32 }}>{icon}</View>
-      <Text style={{
-        flex: 1, fontSize: 15, fontWeight: '500',
-        color: danger ? '#ef4444' : '#1e293b',
-      }}>{label}</Text>
-      {value && <Text style={{ fontSize: 14, color: '#94a3b8', marginRight: 6 }}>{value}</Text>}
-      {rightElement ?? (onPress && <ChevronRight {...{ size: 16, color: '#cbd5e1' } as any} />)}
-    </TouchableOpacity>
-  );
-}
-
-// ─── ADD ITEM modal ───────────────────────────────────────────────────────────
-
-function AddItemModal({
-  visible, title, onClose, onAdd, withIcon = false,
-}: {
-  visible: boolean;
-  title: string;
-  onClose: () => void;
-  onAdd: (name: string, icon?: string, color?: string) => Promise<void>;
-  withIcon?: boolean;
-}) {
-  const [name,    setName]    = useState('');
-  const [icon,    setIcon]    = useState('🏷️');
-  const [color,   setColor]   = useState('#3b82f6');
-  const [loading, setLoading] = useState(false);
-
-  const reset = () => { setName(''); setIcon('🏷️'); setColor('#3b82f6'); };
-
-  const handleAdd = async () => {
-    if (!name.trim()) { Alert.alert('Required', 'Please enter a name.'); return; }
-    setLoading(true);
-    try {
-      await onAdd(name.trim(), withIcon ? icon : undefined, withIcon ? color : undefined);
-      reset(); onClose();
-    } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'Could not add item.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }}>
-        <View style={{
-          backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24,
-          padding: 24, paddingBottom: 36,
-        }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-            <Text style={{ fontSize: 18, fontWeight: '700', color: '#0f172a' }}>{title}</Text>
-            <TouchableOpacity onPress={() => { reset(); onClose(); }}>
-              <X {...{ size: 22, color: '#64748b' } as any} />
-            </TouchableOpacity>
-          </View>
-
-          <Text style={{ fontSize: 13, color: '#64748b', fontWeight: '600', marginBottom: 8 }}>NAME</Text>
-          <TextInput
-            value={name}
-            onChangeText={setName}
-            placeholder="e.g. Entertainment"
-            placeholderTextColor="#94a3b8"
-            style={{
-              backgroundColor: '#f8fafc', padding: 14, borderRadius: 12,
-              fontSize: 15, borderWidth: 1, borderColor: '#e2e8f0',
-              color: '#0f172a', marginBottom: 16,
-            }}
-          />
-
-          {withIcon && (
-            <>
-              <Text style={{ fontSize: 13, color: '#64748b', fontWeight: '600', marginBottom: 8 }}>ICON</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  {EMOJI_PRESETS.map(e => (
-                    <TouchableOpacity
-                      key={e}
-                      onPress={() => setIcon(e)}
-                      style={{
-                        width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
-                        backgroundColor: icon === e ? '#eff6ff' : '#f8fafc',
-                        borderWidth: icon === e ? 2 : 1, borderColor: icon === e ? '#2563eb' : '#e2e8f0',
-                      }}
-                    >
-                      <Text style={{ fontSize: 22 }}>{e}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </ScrollView>
-
-              <Text style={{ fontSize: 13, color: '#64748b', fontWeight: '600', marginBottom: 8 }}>COLOR</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 }}>
-                {COLOR_PRESETS.map(c => (
-                  <TouchableOpacity
-                    key={c}
-                    onPress={() => setColor(c)}
-                    style={{
-                      width: 36, height: 36, borderRadius: 18,
-                      backgroundColor: c,
-                      alignItems: 'center', justifyContent: 'center',
-                      borderWidth: color === c ? 3 : 0, borderColor: '#fff',
-                      shadowColor: color === c ? c : 'transparent',
-                      shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.6, shadowRadius: 6,
-                    }}
-                  >
-                    {color === c && <Check {...{ size: 16, color: '#fff' } as any} />}
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </>
-          )}
-
-          <TouchableOpacity
-            onPress={handleAdd}
-            disabled={loading}
-            style={{
-              backgroundColor: loading ? '#bfdbfe' : '#2563eb',
-              paddingVertical: 16, borderRadius: 14, alignItems: 'center',
-            }}
-          >
-            {loading
-              ? <ActivityIndicator color="#fff" />
-              : <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Add</Text>}
-          </TouchableOpacity>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-// ─── CHANGE PIN modal ─────────────────────────────────────────────────────────
-
-function ChangePINModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const { setupPin, biometricEnabled } = useAuthStore();
-  const [current,  setCurrent]  = useState('');
-  const [next,     setNext]     = useState('');
-  const [confirm,  setConfirm]  = useState('');
-  const [showCur,  setShowCur]  = useState(false);
-  const [showNew,  setShowNew]  = useState(false);
-  const [loading,  setLoading]  = useState(false);
-  const { login } = useAuthStore();
-
-  const reset = () => { setCurrent(''); setNext(''); setConfirm(''); };
-
-  const handleSave = async () => {
-    if (next.length < 4) { Alert.alert('Too short', 'PIN must be at least 4 digits.'); return; }
-    if (next !== confirm) { Alert.alert('Mismatch', 'New PINs do not match.'); return; }
-    setLoading(true);
-    try {
-      const valid = await login(current);
-      if (!valid) { Alert.alert('Wrong PIN', 'Current PIN is incorrect.'); setLoading(false); return; }
-      await setupPin(next, '', '', biometricEnabled);
-      Alert.alert('Success', 'PIN updated successfully.');
-      reset(); onClose();
-    } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'Could not change PIN.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }}>
-        <View style={{
-          backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24,
-          padding: 24, paddingBottom: 40,
-        }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-            <Text style={{ fontSize: 18, fontWeight: '700', color: '#0f172a' }}>Change PIN</Text>
-            <TouchableOpacity onPress={() => { reset(); onClose(); }}>
-              <X {...{ size: 22, color: '#64748b' } as any} />
-            </TouchableOpacity>
-          </View>
-
-          {[
-            { label: 'CURRENT PIN', val: current, set: setCurrent, show: showCur, toggle: () => setShowCur(v => !v) },
-            { label: 'NEW PIN',     val: next,    set: setNext,    show: showNew, toggle: () => setShowNew(v => !v) },
-            { label: 'CONFIRM NEW PIN', val: confirm, set: setConfirm, show: showNew, toggle: () => setShowNew(v => !v) },
-          ].map(f => (
-            <View key={f.label} style={{ marginBottom: 16 }}>
-              <Text style={{ fontSize: 12, color: '#64748b', fontWeight: '600', marginBottom: 6 }}>{f.label}</Text>
-              <View style={{
-                flexDirection: 'row', alignItems: 'center',
-                backgroundColor: '#f8fafc', borderRadius: 12,
-                borderWidth: 1, borderColor: '#e2e8f0',
-                paddingHorizontal: 14,
-              }}>
-                <TextInput
-                  value={f.val}
-                  onChangeText={f.set}
-                  secureTextEntry={!f.show}
-                  keyboardType="numeric"
-                  maxLength={8}
-                  placeholder="••••"
-                  placeholderTextColor="#94a3b8"
-                  style={{ flex: 1, paddingVertical: 14, fontSize: 18, color: '#0f172a', letterSpacing: 4 }}
-                />
-                <TouchableOpacity onPress={f.toggle}>
-                  {f.show
-                    ? <EyeOff {...{ size: 18, color: '#94a3b8' } as any} />
-                    : <Eye   {...{ size: 18, color: '#94a3b8' } as any} />}
-                </TouchableOpacity>
-              </View>
-            </View>
-          ))}
-
-          <TouchableOpacity
-            onPress={handleSave}
-            disabled={loading}
-            style={{
-              backgroundColor: loading ? '#bfdbfe' : '#2563eb',
-              paddingVertical: 16, borderRadius: 14, alignItems: 'center', marginTop: 8,
-            }}
-          >
-            {loading
-              ? <ActivityIndicator color="#fff" />
-              : <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Update PIN</Text>}
-          </TouchableOpacity>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-// ─── MAIN SETTINGS SCREEN ────────────────────────────────────────────────────
+import { authService } from '../../../src/services/auth';
+import { backupService } from '../../../src/services/backup';
 
 export default function SettingsScreen() {
-  const { categories, paymentModes, fetchData } = useCategoryStore();
-  const { biometricEnabled, logout, setupPin, hasPinSetup } = useAuthStore();
+  const router = useRouter();
+  const { categories, paymentModes, addCategory, editCategory, deleteCategory, addPaymentMode, deletePaymentMode } = useCategoryStore();
+  const { biometricEnabled, logout } = useAuthStore();
 
-  const [showAddCat,  setShowAddCat]  = useState(false);
-  const [showAddPM,   setShowAddPM]   = useState(false);
-  const [showPIN,     setShowPIN]     = useState(false);
-  const [bioEnabled,  setBioEnabled]  = useState(biometricEnabled);
-  const [backingUp,   setBackingUp]   = useState(false);
-  const [restoring,   setRestoring]   = useState(false);
+  // Category modal
+  const [catModal, setCatModal] = useState(false);
+  const [catName, setCatName] = useState('');
+  const [catIcon, setCatIcon] = useState('');
+  const [catColor, setCatColor] = useState('#01696f');
+  const [editingCatId, setEditingCatId] = useState<number | null>(null);
+  const [catSaving, setCatSaving] = useState(false);
 
-  useEffect(() => { fetchData(); }, []);
-  useEffect(() => { setBioEnabled(biometricEnabled); }, [biometricEnabled]);
+  // Payment mode modal
+  const [pmModal, setPmModal] = useState(false);
+  const [pmName, setPmName] = useState('');
+  const [pmSaving, setPmSaving] = useState(false);
 
-  const parentCategories = categories.filter(c => !c.parent_id);
+  // PIN change
+  const [pinModal, setPinModal] = useState(false);
+  const [oldPin, setOldPin] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
+  const [pinSaving, setPinSaving] = useState(false);
 
-  // ── add category
-  const handleAddCategory = async (name: string, icon?: string, color?: string) => {
-    await addCategory(name, icon ?? null, color ?? null, null);
-    await fetchData();
+  // Biometric
+  const [bioEnabled, setBioEnabled] = useState(biometricEnabled);
+
+  // Backup
+  const [backing, setBacking] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+
+  const openAddCat = () => { setEditingCatId(null); setCatName(''); setCatIcon(''); setCatColor('#01696f'); setCatModal(true); };
+  const openEditCat = (c: typeof categories[0]) => { setEditingCatId(c.id); setCatName(c.name); setCatIcon(c.icon ?? ''); setCatColor(c.color ?? '#01696f'); setCatModal(true); };
+
+  const saveCat = async () => {
+    if (!catName.trim()) { Alert.alert('Error', 'Category name is required'); return; }
+    setCatSaving(true);
+    if (editingCatId) {
+      await editCategory(editingCatId, catName.trim(), catIcon.trim() || null, catColor.trim() || null);
+    } else {
+      await addCategory(catName.trim(), catIcon.trim() || null, catColor.trim() || null, null);
+    }
+    setCatSaving(false);
+    setCatModal(false);
   };
 
-  // ── delete category
-  const handleDeleteCategory = (id: number, name: string) => {
-    Alert.alert(
-      'Delete Category',
-      `Remove "${name}"? This won't delete existing expenses.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete', style: 'destructive',
-          onPress: async () => {
-            try { await deleteCategory(id); await fetchData(); }
-            catch (e: any) { Alert.alert('Error', e.message); }
-          },
-        },
-      ]
-    );
+  const deleteCat = (id: number, name: string) => {
+    Alert.alert('Delete Category', `Delete "${name}"? Expenses using it will become uncategorized.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => deleteCategory(id) },
+    ]);
   };
 
-  // ── add payment mode
-  const handleAddPaymentMode = async (name: string) => {
-    await addPaymentMode(name);
-    await fetchData();
+  const savePM = async () => {
+    if (!pmName.trim()) { Alert.alert('Error', 'Payment mode name is required'); return; }
+    setPmSaving(true);
+    await addPaymentMode(pmName.trim());
+    setPmSaving(false);
+    setPmModal(false);
+    setPmName('');
   };
 
-  // ── delete payment mode
-  const handleDeletePaymentMode = (id: number, name: string) => {
-    Alert.alert(
-      'Delete Payment Mode',
-      `Remove "${name}"?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete', style: 'destructive',
-          onPress: async () => {
-            try { await deletePaymentMode(id); await fetchData(); }
-            catch (e: any) { Alert.alert('Error', e.message); }
-          },
-        },
-      ]
-    );
+  const deletePM = (id: number, name: string) => {
+    Alert.alert('Delete Payment Mode', `Delete "${name}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => deletePaymentMode(id) },
+    ]);
   };
 
-  // ── biometric toggle
-  const handleBioToggle = async (val: boolean) => {
+  const changePin = async () => {
+    if (!oldPin || !newPin || !confirmPin) { Alert.alert('Error', 'All fields are required'); return; }
+    if (newPin.length !== 4 || !/^\d{4}$/.test(newPin)) { Alert.alert('Error', 'New PIN must be 4 digits'); return; }
+    if (newPin !== confirmPin) { Alert.alert('Error', 'PINs do not match'); return; }
+    setPinSaving(true);
+    const valid = await authService.verifyPin(oldPin);
+    if (!valid) { Alert.alert('Error', 'Current PIN is incorrect'); setPinSaving(false); return; }
+    await authService.setPin(newPin);
+    setPinSaving(false);
+    setPinModal(false);
+    setOldPin(''); setNewPin(''); setConfirmPin('');
+    Alert.alert('Success', 'PIN changed successfully');
+  };
+
+  const toggleBiometric = async (val: boolean) => {
     setBioEnabled(val);
-    try {
-      await setupPin('', '', '', val); // persists biometric preference only
-    } catch (e) { /* ignore pin-empty error */ }
+    await authService.setBiometricEnabled(val);
   };
 
-  // ── backup
   const handleBackup = async () => {
-    setBackingUp(true);
+    setBacking(true);
     try {
-      const [cats, pms] = await Promise.all([getCategories(), getPaymentModes()]);
-      const payload = JSON.stringify({ categories: cats, paymentModes: pms, exportedAt: new Date().toISOString() }, null, 2);
-      const path = FileSystem.documentDirectory + `expense-backup-${new Date().toISOString().split('T')[0]}.json`;
-      await FileSystem.writeAsStringAsync(path, payload, { encoding: FileSystem.EncodingType.UTF8 });
-      await Sharing.shareAsync(path, { mimeType: 'application/json', dialogTitle: 'Save Backup File' });
+      await backupService.exportBackup();
     } catch (e: any) {
-      Alert.alert('Backup Failed', e.message ?? 'Could not create backup.');
+      Alert.alert('Backup Failed', e.message);
     } finally {
-      setBackingUp(false);
+      setBacking(false);
     }
   };
 
-  // ── restore
   const handleRestore = async () => {
-    Alert.alert(
-      'Restore Settings',
-      'This will import categories and payment modes from a backup file. Existing ones are not removed.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Pick File', onPress: async () => {
-            setRestoring(true);
-            try {
-              const result = await DocumentPicker.getDocumentAsync({ type: 'application/json' });
-              if (result.canceled || !result.assets?.[0]) { setRestoring(false); return; }
-              const content = await FileSystem.readAsStringAsync(result.assets[0].uri);
-              const data = JSON.parse(content);
-              let imported = 0;
-              for (const c of (data.categories ?? [])) {
-                if (c.is_system) continue;
-                try { await addCategory(c.name, c.icon, c.color, null); imported++; } catch { /* skip dupe */ }
-              }
-              for (const p of (data.paymentModes ?? [])) {
-                if (p.is_system) continue;
-                try { await addPaymentMode(p.name); imported++; } catch { /* skip dupe */ }
-              }
-              await fetchData();
-              Alert.alert('Restored', `Imported ${imported} items from backup.`);
-            } catch (e: any) {
-              Alert.alert('Restore Failed', e.message ?? 'Invalid backup file.');
-            } finally {
-              setRestoring(false);
-            }
-          },
+    Alert.alert('Restore Backup', 'This will overwrite all current data. Continue?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Restore', style: 'destructive', onPress: async () => {
+          setRestoring(true);
+          try {
+            await backupService.importBackup();
+            Alert.alert('Success', 'Backup restored. Restart the app to reload data.');
+          } catch (e: any) {
+            Alert.alert('Restore Failed', e.message);
+          } finally {
+            setRestoring(false);
+          }
         },
-      ]
-    );
+      },
+    ]);
   };
 
-  // ── logout
   const handleLogout = () => {
-    Alert.alert(
-      'Lock App',
-      'This will lock the app and return to the PIN screen.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Lock', style: 'destructive', onPress: logout },
-      ]
-    );
+    Alert.alert('Lock App', 'Lock the app and go to login screen?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Lock', onPress: logout },
+    ]);
   };
 
-  // ─── render ───────────────────────────────────────────────────────────────
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#f8fafc' }}>
-      <ScrollView
-        contentContainerStyle={{ padding: 20, paddingBottom: 60 }}
-        showsVerticalScrollIndicator={false}
-      >
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Settings</Text>
+      </View>
 
-        {/* ── Categories ── */}
-        <SectionHeader title="Categories" />
-        <View style={{ backgroundColor: '#fff', borderRadius: 16, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 1 }}>
-          {parentCategories.length === 0 && (
-            <View style={{ padding: 20, alignItems: 'center' }}>
-              <Text style={{ color: '#94a3b8', fontSize: 14 }}>No custom categories yet</Text>
-            </View>
-          )}
-          {parentCategories.map((cat) => (
-            <View key={cat.id} style={{
-              flexDirection: 'row', alignItems: 'center',
-              paddingVertical: 13, paddingHorizontal: 16,
-              borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
-            }}>
-              <View style={{
-                width: 36, height: 36, borderRadius: 18,
-                backgroundColor: cat.color ? cat.color + '22' : '#eff6ff',
-                alignItems: 'center', justifyContent: 'center', marginRight: 12,
-              }}>
-                <Text style={{ fontSize: 18 }}>{cat.icon ?? '🏷️'}</Text>
+      <ScrollView contentContainerStyle={styles.scroll}>
+
+        {/* Categories */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Categories</Text>
+            <TouchableOpacity style={styles.addChip} onPress={openAddCat}>
+              <Text style={styles.addChipText}>+ Add</Text>
+            </TouchableOpacity>
+          </View>
+          {categories.map(c => (
+            <View key={c.id} style={styles.listItem}>
+              <View style={styles.listItemLeft}>
+                {c.color && <View style={[styles.catDot, { backgroundColor: c.color }]} />}
+                <Text style={styles.listItemText}>{c.icon ? `${c.icon} ` : ''}{c.name}</Text>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 15, fontWeight: '500', color: '#1e293b' }}>{cat.name}</Text>
-                {cat.is_system === 1 && (
-                  <Text style={{ fontSize: 11, color: '#94a3b8', marginTop: 1 }}>System</Text>
-                )}
-              </View>
-              {cat.is_system === 0 && (
-                <TouchableOpacity
-                  onPress={() => handleDeleteCategory(cat.id, cat.name)}
-                  style={{ padding: 8 }}
-                >
-                  <Trash2 {...{ size: 16, color: '#ef4444' } as any} />
+              <View style={styles.listItemActions}>
+                <TouchableOpacity onPress={() => openEditCat(c)} style={styles.iconBtn}>
+                  <Text style={styles.editText}>Edit</Text>
                 </TouchableOpacity>
-              )}
+                <TouchableOpacity onPress={() => deleteCat(c.id, c.name)} style={styles.iconBtn}>
+                  <Text style={styles.deleteText}>Delete</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           ))}
+          {categories.length === 0 && <Text style={styles.emptyText}>No categories yet</Text>}
+        </View>
 
-          <TouchableOpacity
-            onPress={() => setShowAddCat(true)}
-            style={{
-              flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-              paddingVertical: 14,
-              backgroundColor: '#f8fafc',
-            }}
-          >
-            <Plus {...{ size: 16, color: '#2563eb' } as any} />
-            <Text style={{ color: '#2563eb', fontWeight: '600', fontSize: 14 }}>Add Category</Text>
+        {/* Payment Modes */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Payment Modes</Text>
+            <TouchableOpacity style={styles.addChip} onPress={() => { setPmName(''); setPmModal(true); }}>
+              <Text style={styles.addChipText}>+ Add</Text>
+            </TouchableOpacity>
+          </View>
+          {paymentModes.map(pm => (
+            <View key={pm.id} style={styles.listItem}>
+              <Text style={styles.listItemText}>{pm.name}</Text>
+              {!pm.is_default && (
+                <TouchableOpacity onPress={() => deletePM(pm.id, pm.name)}>
+                  <Text style={styles.deleteText}>Delete</Text>
+                </TouchableOpacity>
+              )}
+              {pm.is_default && <Text style={styles.defaultBadge}>Default</Text>}
+            </View>
+          ))}
+        </View>
+
+        {/* Security */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Security</Text>
+          <TouchableOpacity style={styles.rowItem} onPress={() => setPinModal(true)}>
+            <Text style={styles.rowItemText}>🔑 Change PIN</Text>
+            <Text style={styles.rowChevron}>›</Text>
+          </TouchableOpacity>
+          <View style={styles.rowItem}>
+            <Text style={styles.rowItemText}>👆 Biometric Unlock</Text>
+            <Switch
+              value={bioEnabled}
+              onValueChange={toggleBiometric}
+              trackColor={{ false: '#d1d5db', true: '#01696f' }}
+            />
+          </View>
+        </View>
+
+        {/* Backup */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Data</Text>
+          <TouchableOpacity style={styles.rowItem} onPress={handleBackup} disabled={backing}>
+            <Text style={styles.rowItemText}>💾 Backup Data</Text>
+            {backing ? <ActivityIndicator size="small" color="#01696f" /> : <Text style={styles.rowChevron}>›</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.rowItem} onPress={handleRestore} disabled={restoring}>
+            <Text style={styles.rowItemText}>📥 Restore Backup</Text>
+            {restoring ? <ActivityIndicator size="small" color="#01696f" /> : <Text style={styles.rowChevron}>›</Text>}
           </TouchableOpacity>
         </View>
 
-        {/* ── Payment Modes ── */}
-        <SectionHeader title="Payment Modes" />
-        <View style={{ backgroundColor: '#fff', borderRadius: 16, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 1 }}>
-          {paymentModes.map((pm) => (
-            <View key={pm.id} style={{
-              flexDirection: 'row', alignItems: 'center',
-              paddingVertical: 13, paddingHorizontal: 16,
-              borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
-            }}>
-              <View style={{
-                width: 36, height: 36, borderRadius: 18,
-                backgroundColor: '#f0fdf4', alignItems: 'center', justifyContent: 'center', marginRight: 12,
-              }}>
-                <CreditCard {...{ size: 18, color: '#16a34a' } as any} />
-              </View>
-              <Text style={{ flex: 1, fontSize: 15, fontWeight: '500', color: '#1e293b' }}>{pm.name}</Text>
-              {pm.is_system === 0 && (
-                <TouchableOpacity
-                  onPress={() => handleDeletePaymentMode(pm.id, pm.name)}
-                  style={{ padding: 8 }}
-                >
-                  <Trash2 {...{ size: 16, color: '#ef4444' } as any} />
-                </TouchableOpacity>
-              )}
-              {pm.is_system === 1 && (
-                <Text style={{ fontSize: 11, color: '#94a3b8' }}>System</Text>
-              )}
-            </View>
-          ))}
-
-          <TouchableOpacity
-            onPress={() => setShowAddPM(true)}
-            style={{
-              flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-              paddingVertical: 14,
-              backgroundColor: '#f8fafc',
-            }}
-          >
-            <Plus {...{ size: 16, color: '#16a34a' } as any} />
-            <Text style={{ color: '#16a34a', fontWeight: '600', fontSize: 14 }}>Add Payment Mode</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* ── Security ── */}
-        <SectionHeader title="Security" />
-        <View style={{ backgroundColor: '#fff', borderRadius: 16, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 1 }}>
-          <SettingsRow
-            icon={<Shield {...{ size: 18, color: '#7c3aed' } as any} />}
-            label="Change PIN"
-            onPress={() => setShowPIN(true)}
-          />
-          <SettingsRow
-            icon={<Eye {...{ size: 18, color: '#0891b2' } as any} />}
-            label="Biometric Unlock"
-            rightElement={
-              <Switch
-                value={bioEnabled}
-                onValueChange={handleBioToggle}
-                trackColor={{ false: '#e2e8f0', true: '#bfdbfe' }}
-                thumbColor={bioEnabled ? '#2563eb' : '#94a3b8'}
-              />
-            }
-          />
-          <SettingsRow
-            icon={<LogOut {...{ size: 18, color: '#ef4444' } as any} />}
-            label="Lock App"
-            danger
-            onPress={handleLogout}
-          />
-        </View>
-
-        {/* ── Backup & Restore ── */}
-        <SectionHeader title="Data" />
-        <View style={{ backgroundColor: '#fff', borderRadius: 16, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 1 }}>
-          <SettingsRow
-            icon={backingUp
-              ? <ActivityIndicator size="small" color="#2563eb" />
-              : <Download {...{ size: 18, color: '#2563eb' } as any} />}
-            label={backingUp ? 'Creating backup…' : 'Backup Settings'}
-            value="JSON"
-            onPress={backingUp ? undefined : handleBackup}
-          />
-          <SettingsRow
-            icon={restoring
-              ? <ActivityIndicator size="small" color="#7c3aed" />
-              : <Upload {...{ size: 18, color: '#7c3aed' } as any} />}
-            label={restoring ? 'Restoring…' : 'Restore Settings'}
-            onPress={restoring ? undefined : handleRestore}
-          />
-        </View>
-
-        {/* ── About ── */}
-        <SectionHeader title="About" />
-        <View style={{ backgroundColor: '#fff', borderRadius: 16, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 1 }}>
-          <SettingsRow
-            icon={<Info {...{ size: 18, color: '#64748b' } as any} />}
-            label="App Version"
-            value="1.0.0"
-          />
-          <SettingsRow
-            icon={<Tag {...{ size: 18, color: '#64748b' } as any} />}
-            label="Storage"
-            value="Local only"
-          />
-          <SettingsRow
-            icon={<Shield {...{ size: 18, color: '#64748b' } as any} />}
-            label="Privacy"
-            value="No cloud · No tracking"
-          />
-        </View>
+        {/* Lock */}
+        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+          <Text style={styles.logoutBtnText}>🔒 Lock App</Text>
+        </TouchableOpacity>
 
       </ScrollView>
 
-      {/* ── Modals ── */}
-      <AddItemModal
-        visible={showAddCat}
-        title="New Category"
-        onClose={() => setShowAddCat(false)}
-        onAdd={handleAddCategory}
-        withIcon
-      />
-      <AddItemModal
-        visible={showAddPM}
-        title="New Payment Mode"
-        onClose={() => setShowAddPM(false)}
-        onAdd={handleAddPaymentMode}
-        withIcon={false}
-      />
-      <ChangePINModal
-        visible={showPIN}
-        onClose={() => setShowPIN(false)}
-      />
+      {/* Category Modal */}
+      <Modal visible={catModal} transparent animationType="slide">
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setCatModal(false)} />
+        <View style={styles.modalSheet}>
+          <Text style={styles.modalTitle}>{editingCatId ? 'Edit Category' : 'New Category'}</Text>
+          <Text style={styles.fieldLabel}>Name *</Text>
+          <TextInput style={styles.fieldInput} value={catName} onChangeText={setCatName} placeholder="e.g. Groceries" autoFocus />
+          <Text style={styles.fieldLabel}>Icon (emoji)</Text>
+          <TextInput style={styles.fieldInput} value={catIcon} onChangeText={setCatIcon} placeholder="e.g. 🛒" />
+          <Text style={styles.fieldLabel}>Color (hex)</Text>
+          <TextInput style={styles.fieldInput} value={catColor} onChangeText={setCatColor} placeholder="#01696f" autoCapitalize="none" />
+          <TouchableOpacity style={[styles.modalBtn, catSaving && { opacity: 0.6 }]} onPress={saveCat} disabled={catSaving}>
+            {catSaving ? <ActivityIndicator color="white" /> : <Text style={styles.modalBtnText}>Save</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setCatModal(false)}>
+            <Text style={styles.modalCancelText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
+
+      {/* Payment Mode Modal */}
+      <Modal visible={pmModal} transparent animationType="slide">
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setPmModal(false)} />
+        <View style={styles.modalSheet}>
+          <Text style={styles.modalTitle}>New Payment Mode</Text>
+          <Text style={styles.fieldLabel}>Name *</Text>
+          <TextInput style={styles.fieldInput} value={pmName} onChangeText={setPmName} placeholder="e.g. GPay" autoFocus />
+          <TouchableOpacity style={[styles.modalBtn, pmSaving && { opacity: 0.6 }]} onPress={savePM} disabled={pmSaving}>
+            {pmSaving ? <ActivityIndicator color="white" /> : <Text style={styles.modalBtnText}>Add</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setPmModal(false)}>
+            <Text style={styles.modalCancelText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
+
+      {/* PIN Change Modal */}
+      <Modal visible={pinModal} transparent animationType="slide">
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setPinModal(false)} />
+        <View style={styles.modalSheet}>
+          <Text style={styles.modalTitle}>Change PIN</Text>
+          <Text style={styles.fieldLabel}>Current PIN</Text>
+          <TextInput style={[styles.fieldInput, { letterSpacing: 12, textAlign: 'center' }]} value={oldPin} onChangeText={setOldPin} keyboardType="number-pad" maxLength={4} secureTextEntry />
+          <Text style={styles.fieldLabel}>New PIN</Text>
+          <TextInput style={[styles.fieldInput, { letterSpacing: 12, textAlign: 'center' }]} value={newPin} onChangeText={setNewPin} keyboardType="number-pad" maxLength={4} secureTextEntry />
+          <Text style={styles.fieldLabel}>Confirm New PIN</Text>
+          <TextInput style={[styles.fieldInput, { letterSpacing: 12, textAlign: 'center' }]} value={confirmPin} onChangeText={setConfirmPin} keyboardType="number-pad" maxLength={4} secureTextEntry />
+          <TouchableOpacity style={[styles.modalBtn, pinSaving && { opacity: 0.6 }]} onPress={changePin} disabled={pinSaving}>
+            {pinSaving ? <ActivityIndicator color="white" /> : <Text style={styles.modalBtnText}>Update PIN</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setPinModal(false)}>
+            <Text style={styles.modalCancelText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f8fafc' },
+  header: { paddingHorizontal: 16, paddingVertical: 14, backgroundColor: 'white', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  headerTitle: { fontSize: 22, fontWeight: '700', color: '#0f172a' },
+  scroll: { padding: 16, paddingBottom: 60 },
+  section: { backgroundColor: 'white', borderRadius: 12, padding: 16, marginBottom: 16 },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#0f172a', marginBottom: 4 },
+  addChip: { backgroundColor: '#e0f2f1', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14 },
+  addChipText: { color: '#01696f', fontWeight: '600', fontSize: 13 },
+  listItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f8fafc' },
+  listItemLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  listItemText: { fontSize: 14, color: '#334155' },
+  listItemActions: { flexDirection: 'row', gap: 12 },
+  catDot: { width: 10, height: 10, borderRadius: 5 },
+  iconBtn: { padding: 4 },
+  editText: { fontSize: 13, color: '#0369a1', fontWeight: '500' },
+  deleteText: { fontSize: 13, color: '#ef4444', fontWeight: '500' },
+  defaultBadge: { fontSize: 11, color: '#94a3b8', backgroundColor: '#f1f5f9', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  emptyText: { fontSize: 13, color: '#94a3b8', textAlign: 'center', paddingVertical: 12 },
+  rowItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f8fafc' },
+  rowItemText: { fontSize: 15, color: '#334155' },
+  rowChevron: { fontSize: 20, color: '#94a3b8' },
+  logoutBtn: { backgroundColor: '#fff1f2', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 8 },
+  logoutBtnText: { color: '#dc2626', fontWeight: '700', fontSize: 15 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
+  modalSheet: { backgroundColor: 'white', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24, paddingBottom: 40 },
+  modalTitle: { fontSize: 20, fontWeight: '700', color: '#0f172a', marginBottom: 20, textAlign: 'center' },
+  fieldLabel: { fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 6, marginTop: 12 },
+  fieldInput: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 10, padding: 12, fontSize: 16, color: '#0f172a' },
+  modalBtn: { backgroundColor: '#01696f', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 20 },
+  modalBtnText: { color: 'white', fontSize: 16, fontWeight: '700' },
+  modalCancelBtn: { padding: 14, alignItems: 'center' },
+  modalCancelText: { color: '#64748b', fontSize: 15 },
+});

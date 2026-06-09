@@ -1,220 +1,176 @@
+import { useState, useEffect, useCallback } from 'react';
 import {
-  View,
-  Text,
-  FlatList,
-  TouchableOpacity,
-  SafeAreaView,
-  Alert,
-  ActivityIndicator,
+  View, Text, StyleSheet, FlatList, TouchableOpacity,
+  SafeAreaView, Modal, TextInput, Alert, ActivityIndicator,
+  ScrollView, RefreshControl,
 } from 'react-native';
-import { useEffect, useState } from 'react';
-import { useExpenseStore } from '../../../src/store/expenseStore';
-import { useCategoryStore } from '../../../src/store/categoryStore';
-import { RecurringTemplate } from '../../../src/db/queries';
-import { Plus, RefreshCw, CheckCircle, Trash2, Calendar } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
+import { useRecurringStore } from '../../../src/store/recurringStore';
+import { formatINR } from '../../../src/utils/currency';
+import { RecurringType, RecurringStatus, Frequency } from '../../../src/constants/enums';
 
-// ─── helpers ──────────────────────────────────────────────────────────────────
+const TABS = ['Pending', 'Active', 'Completed'] as const;
+type Tab = typeof TABS[number];
 
-type DueStatus = 'overdue' | 'due-soon' | 'ok' | 'completed' | 'paused';
+const TYPE_LABEL: Record<string, string> = {
+  fixed: 'Fixed',
+  installment: 'Installment',
+  variable: 'Variable',
+};
 
-function getDueStatus(t: RecurringTemplate): DueStatus {
-  if (t.status === 'completed') return 'completed';
-  if (t.status === 'paused')    return 'paused';
+const FREQ_LABEL: Record<string, string> = {
+  daily: 'Daily',
+  weekly: 'Weekly',
+  monthly: 'Monthly',
+  yearly: 'Yearly',
+};
+
+function getDueStatus(dueDate: string): 'overdue' | 'today' | 'soon' | 'upcoming' {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const due  = new Date(t.next_due_date);
+  const due = new Date(dueDate);
+  due.setHours(0, 0, 0, 0);
   const diff = Math.floor((due.getTime() - today.getTime()) / 86400000);
-  if (diff < 0)  return 'overdue';
-  if (diff <= 3) return 'due-soon';
-  return 'ok';
+  if (diff < 0) return 'overdue';
+  if (diff === 0) return 'today';
+  if (diff <= 3) return 'soon';
+  return 'upcoming';
 }
 
-const DUE_BADGE: Record<DueStatus, { bg: string; text: string; label: string }> = {
-  overdue:   { bg: '#fef2f2', text: '#dc2626', label: 'Overdue'   },
-  'due-soon':{ bg: '#fffbeb', text: '#d97706', label: 'Due Soon'  },
-  ok:        { bg: '#f0fdf4', text: '#16a34a', label: 'On Track'  },
-  completed: { bg: '#f8fafc', text: '#64748b', label: 'Completed' },
-  paused:    { bg: '#f8fafc', text: '#94a3b8', label: 'Paused'    },
+const DUE_COLORS = {
+  overdue: '#ef4444',
+  today: '#f97316',
+  soon: '#eab308',
+  upcoming: '#22c55e',
 };
-
-type FilterType = 'all' | 'fixed' | 'installment' | 'variable';
-
-const TYPE_LABEL: Record<RecurringTemplate['type'], string> = {
-  fixed:       'Fixed',
-  installment: 'Installment',
-  variable:    'Variable',
-};
-
-const TYPE_COLOR: Record<RecurringTemplate['type'], string> = {
-  fixed:       '#2563eb',
-  installment: '#7c3aed',
-  variable:    '#0891b2',
-};
-
-function formatAmount(t: RecurringTemplate): string {
-  if (t.type === 'variable') {
-    return `₹${t.min_amount ?? 0}–₹${t.max_amount ?? 0}`;
-  }
-  if (t.type === 'installment') {
-    return `₹${(t.installment_amt ?? t.amount ?? 0).toFixed(0)}/inst`;
-  }
-  return `₹${(t.amount ?? 0).toFixed(0)}`;
-}
-
-function progressBar(t: RecurringTemplate) {
-  if (t.type !== 'installment' || !t.total_periods) return null;
-  const pct = Math.min((t.paid_periods / t.total_periods) * 100, 100);
-  return { pct, paid: t.paid_periods, total: t.total_periods };
-}
-
-// ─── component ────────────────────────────────────────────────────────────────
 
 export default function RecurringScreen() {
-  const { recurringTemplates, isLoading, fetchData, removeRecurringTemplate, markRecurringPaid } =
-    useExpenseStore();
-  const { categories } = useCategoryStore();
   const router = useRouter();
+  const { templates, pendingEntries, loading, loadAll, loadPending, markPaid, skipEntry, deleteTemplate } = useRecurringStore();
+  const [activeTab, setActiveTab] = useState<Tab>('Pending');
+  const [refreshing, setRefreshing] = useState(false);
 
-  const [filter, setFilter] = useState<FilterType>('all');
+  // Mark-as-paid modal
+  const [payModal, setPayModal] = useState(false);
+  const [selectedEntryId, setSelectedEntryId] = useState<number | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
+  const [defaultAmount, setDefaultAmount] = useState('');
+  const [actualAmount, setActualAmount] = useState('');
+  const [paying, setPaying] = useState(false);
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    loadAll();
+    loadPending();
+  }, []);
 
-  const getCategoryName = (id: number | null) => {
-    if (!id) return 'Uncategorized';
-    return categories.find(c => c.id === id)?.name ?? 'Unknown';
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadAll();
+    await loadPending();
+    setRefreshing(false);
+  }, []);
+
+  const openPayModal = (entryId: number, templateId: number, amount: number) => {
+    setSelectedEntryId(entryId);
+    setSelectedTemplateId(templateId);
+    setDefaultAmount(amount.toString());
+    setActualAmount(amount.toString());
+    setPayModal(true);
   };
 
-  const filtered = filter === 'all'
-    ? recurringTemplates
-    : recurringTemplates.filter(t => t.type === filter);
-
-  const handleMarkPaid = (t: RecurringTemplate) => {
-    Alert.alert(
-      'Mark as Paid',
-      `Mark "${t.name}" as paid for this cycle?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Mark Paid',
-          onPress: () => markRecurringPaid(t.id, t.amount ?? t.installment_amt ?? 0),
-        },
-      ]
-    );
+  const handleMarkPaid = async () => {
+    if (!selectedEntryId || !selectedTemplateId) return;
+    const amt = parseFloat(actualAmount);
+    if (isNaN(amt) || amt <= 0) {
+      Alert.alert('Invalid Amount', 'Please enter a valid amount.');
+      return;
+    }
+    setPaying(true);
+    await markPaid(selectedEntryId, amt, selectedTemplateId);
+    setPaying(false);
+    setPayModal(false);
   };
 
-  const handleDelete = (t: RecurringTemplate) => {
-    Alert.alert(
-      'Delete Recurring',
-      `Delete "${t.name}"? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => removeRecurringTemplate(t.id),
-        },
-      ]
-    );
+  const handleSkip = (entryId: number, templateId: number) => {
+    Alert.alert('Skip Payment', 'Mark this payment as skipped for this period?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Skip', style: 'destructive', onPress: () => skipEntry(entryId, templateId) },
+    ]);
   };
 
-  const renderItem = ({ item: t }: { item: RecurringTemplate }) => {
-    const status = getDueStatus(t);
-    const badge  = DUE_BADGE[status];
-    const prog   = progressBar(t);
-    const canPay = t.status === 'active';
+  const handleDelete = (id: number, name: string) => {
+    Alert.alert('Delete Recurring', `Delete "${name}" and all its history?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => deleteTemplate(id) },
+    ]);
+  };
+
+  const pendingTemplateIds = new Set(pendingEntries.map(e => e.template_id));
+
+  const filteredTemplates = templates.filter(t => {
+    if (activeTab === 'Pending') return t.status === RecurringStatus.ACTIVE && pendingTemplateIds.has(t.id);
+    if (activeTab === 'Active') return t.status === RecurringStatus.ACTIVE;
+    return t.status === RecurringStatus.COMPLETED || t.status === RecurringStatus.PAUSED;
+  });
+
+  const renderItem = ({ item }: { item: typeof templates[0] }) => {
+    const pendingEntry = pendingEntries.find(e => e.template_id === item.id);
+    const dueStatus = pendingEntry ? getDueStatus(item.next_due_date) : null;
+    const dueColor = dueStatus ? DUE_COLORS[dueStatus] : '#94a3b8';
+    const daysLeft = pendingEntry ? Math.floor((new Date(item.next_due_date).getTime() - Date.now()) / 86400000) : null;
 
     return (
-      <View style={{
-        backgroundColor: '#ffffff',
-        borderRadius: 14,
-        marginBottom: 12,
-        padding: 16,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.06,
-        shadowRadius: 6,
-        elevation: 2,
-      }}>
-        {/* Row 1: name + amount + badge */}
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <View style={{ flex: 1, marginRight: 12 }}>
-            <Text style={{ fontSize: 16, fontWeight: '600', color: '#0f172a' }} numberOfLines={1}>
-              {t.name}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={styles.cardLeft}>
+            <Text style={styles.cardName}>{item.name}</Text>
+            <Text style={styles.cardMeta}>
+              {TYPE_LABEL[item.type] ?? item.type} · {FREQ_LABEL[item.frequency] ?? item.frequency}
+              {item.category_name ? ` · ${item.category_name}` : ''}
             </Text>
-            <Text style={{ fontSize: 13, color: '#64748b', marginTop: 2 }}>
-              {getCategoryName(t.category_id)} • {t.frequency}
-            </Text>
+            {item.type === RecurringType.INSTALLMENT && item.total_periods && (
+              <Text style={styles.cardMeta}>
+                {item.paid_periods}/{item.total_periods} periods paid
+              </Text>
+            )}
           </View>
-          <View style={{ alignItems: 'flex-end', gap: 6 }}>
-            <Text style={{ fontSize: 16, fontWeight: '700', color: '#0f172a' }}>
-              {formatAmount(t)}
-            </Text>
-            <View style={{ backgroundColor: badge.bg, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 }}>
-              <Text style={{ fontSize: 11, fontWeight: '600', color: badge.text }}>{badge.label}</Text>
-            </View>
+          <View style={styles.cardRight}>
+            <Text style={styles.cardAmount}>{formatINR(item.amount)}</Text>
+            {item.type === RecurringType.VARIABLE && item.amount_max && (
+              <Text style={styles.cardAmountRange}>up to {formatINR(item.amount_max)}</Text>
+            )}
           </View>
         </View>
 
-        {/* Type chip + due date */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10, gap: 8 }}>
-          <View style={{ backgroundColor: TYPE_COLOR[t.type] + '18', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 }}>
-            <Text style={{ fontSize: 11, fontWeight: '600', color: TYPE_COLOR[t.type] }}>
-              {TYPE_LABEL[t.type]}
+        {pendingEntry && (
+          <View style={[styles.dueRow, { borderColor: dueColor }]}>
+            <Text style={[styles.dueText, { color: dueColor }]}>
+              {dueStatus === 'overdue' ? `Overdue by ${Math.abs(daysLeft!)} day${Math.abs(daysLeft!) !== 1 ? 's' : ''}` :
+               dueStatus === 'today' ? 'Due Today' :
+               dueStatus === 'soon' ? `Due in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}` :
+               `Due ${new Date(item.next_due_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`}
             </Text>
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <Calendar {...{ size: 12, color: '#94a3b8' } as any} />
-            <Text style={{ fontSize: 12, color: '#94a3b8' }}>Due: {t.next_due_date}</Text>
-          </View>
-        </View>
-
-        {/* Installment progress bar */}
-        {prog && (
-          <View style={{ marginTop: 10 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-              <Text style={{ fontSize: 12, color: '#64748b' }}>Progress</Text>
-              <Text style={{ fontSize: 12, color: '#64748b' }}>{prog.paid}/{prog.total} paid</Text>
-            </View>
-            <View style={{ height: 6, backgroundColor: '#e2e8f0', borderRadius: 3 }}>
-              <View style={{ width: `${prog.pct}%`, height: 6, backgroundColor: '#7c3aed', borderRadius: 3 }} />
+            <View style={styles.cardActions}>
+              <TouchableOpacity
+                style={[styles.actionBtn, { backgroundColor: '#dcfce7' }]}
+                onPress={() => openPayModal(pendingEntry.id, item.id, item.amount)}
+              >
+                <Text style={[styles.actionBtnText, { color: '#16a34a' }]}>Mark Paid</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionBtn, { backgroundColor: '#fef3c7' }]}
+                onPress={() => handleSkip(pendingEntry.id, item.id)}
+              >
+                <Text style={[styles.actionBtnText, { color: '#d97706' }]}>Skip</Text>
+              </TouchableOpacity>
             </View>
           </View>
         )}
 
-        {/* Actions */}
-        <View style={{ flexDirection: 'row', marginTop: 12, gap: 8 }}>
-          {canPay && (
-            <TouchableOpacity
-              onPress={() => handleMarkPaid(t)}
-              style={{
-                flex: 1,
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                backgroundColor: '#16a34a',
-                paddingVertical: 9,
-                borderRadius: 10,
-              }}
-            >
-              <CheckCircle {...{ size: 15, color: 'white' } as any} />
-              <Text style={{ color: 'white', fontSize: 13, fontWeight: '600' }}>Mark Paid</Text>
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity
-            onPress={() => handleDelete(t)}
-            style={{
-              paddingHorizontal: 16,
-              paddingVertical: 9,
-              borderRadius: 10,
-              borderWidth: 1,
-              borderColor: '#fca5a5',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <Trash2 {...{ size: 15, color: '#ef4444' } as any} />
+        <View style={styles.cardFooter}>
+          <Text style={styles.cardFooterText}>Added {new Date(item.created_at).toLocaleDateString('en-IN')}</Text>
+          <TouchableOpacity onPress={() => handleDelete(item.id, item.name)}>
+            <Text style={styles.deleteText}>Delete</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -222,103 +178,130 @@ export default function RecurringScreen() {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#f8fafc' }}>
-      <View style={{ flex: 1 }}>
-
-        {/* Filter tabs */}
-        <View style={{ flexDirection: 'row', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 4, gap: 8 }}>
-          {(['all', 'fixed', 'installment', 'variable'] as FilterType[]).map(f => (
-            <TouchableOpacity
-              key={f}
-              onPress={() => setFilter(f)}
-              style={{
-                paddingHorizontal: 14,
-                paddingVertical: 7,
-                borderRadius: 20,
-                backgroundColor: filter === f ? '#2563eb' : '#e2e8f0',
-              }}
-            >
-              <Text style={{ fontSize: 13, fontWeight: '600', color: filter === f ? '#ffffff' : '#475569', textTransform: 'capitalize' }}>
-                {f}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Summary strip */}
-        <View style={{
-          flexDirection: 'row',
-          marginHorizontal: 20,
-          marginTop: 12,
-          marginBottom: 4,
-          backgroundColor: '#ffffff',
-          borderRadius: 12,
-          padding: 12,
-          gap: 0,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 1 },
-          shadowOpacity: 0.04,
-          shadowRadius: 4,
-          elevation: 1,
-        }}>
-          {[
-            { label: 'Total',     value: recurringTemplates.length,                                       color: '#0f172a' },
-            { label: 'Overdue',   value: recurringTemplates.filter(t => getDueStatus(t) === 'overdue').length,   color: '#dc2626' },
-            { label: 'Due Soon',  value: recurringTemplates.filter(t => getDueStatus(t) === 'due-soon').length, color: '#d97706' },
-            { label: 'On Track',  value: recurringTemplates.filter(t => getDueStatus(t) === 'ok').length,       color: '#16a34a' },
-          ].map(s => (
-            <View key={s.label} style={{ flex: 1, alignItems: 'center' }}>
-              <Text style={{ fontSize: 20, fontWeight: '700', color: s.color }}>{s.value}</Text>
-              <Text style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{s.label}</Text>
-            </View>
-          ))}
-        </View>
-
-        {/* List */}
-        {isLoading ? (
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <ActivityIndicator size="large" color="#2563eb" />
-          </View>
-        ) : (
-          <FlatList
-            data={filtered}
-            keyExtractor={item => item.id.toString()}
-            contentContainerStyle={{ padding: 20, paddingTop: 12, paddingBottom: 100 }}
-            renderItem={renderItem}
-            ListEmptyComponent={
-              <View style={{ alignItems: 'center', marginTop: 60 }}>
-                <RefreshCw {...{ size: 40, color: '#cbd5e1' } as any} />
-                <Text style={{ color: '#64748b', fontSize: 16, marginTop: 16, fontWeight: '500' }}>No recurring entries yet</Text>
-                <Text style={{ color: '#94a3b8', fontSize: 14, marginTop: 6, textAlign: 'center' }}>Tap + to add loans,\nchit funds, or regular bills.</Text>
-              </View>
-            }
-          />
-        )}
-
-        {/* FAB */}
+    <SafeAreaView style={styles.container}>
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Recurring</Text>
         <TouchableOpacity
+          style={styles.addBtn}
           onPress={() => router.push('/(app)/expenses/add-recurring')}
-          style={{
-            position: 'absolute',
-            bottom: 24,
-            right: 24,
-            width: 56,
-            height: 56,
-            borderRadius: 28,
-            backgroundColor: '#7c3aed',
-            justifyContent: 'center',
-            alignItems: 'center',
-            shadowColor: '#7c3aed',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.35,
-            shadowRadius: 8,
-            elevation: 6,
-          }}
         >
-          <Plus {...{ size: 26, color: 'white' } as any} />
+          <Text style={styles.addBtnText}>+ Add</Text>
         </TouchableOpacity>
-
       </View>
+
+      {/* Tabs */}
+      <View style={styles.tabs}>
+        {TABS.map(tab => (
+          <TouchableOpacity
+            key={tab}
+            style={[styles.tab, activeTab === tab && styles.activeTab]}
+            onPress={() => setActiveTab(tab)}
+          >
+            <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>{tab}</Text>
+            {tab === 'Pending' && pendingEntries.length > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{pendingEntries.length}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {loading && !refreshing ? (
+        <ActivityIndicator style={{ marginTop: 40 }} size="large" color="#01696f" />
+      ) : (
+        <FlatList
+          data={filteredTemplates}
+          keyExtractor={item => item.id.toString()}
+          renderItem={renderItem}
+          contentContainerStyle={styles.list}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#01696f" />}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Text style={styles.emptyIcon}>📋</Text>
+              <Text style={styles.emptyTitle}>No {activeTab.toLowerCase()} items</Text>
+              <Text style={styles.emptySubtitle}>Tap "+ Add" to create a recurring payment</Text>
+            </View>
+          }
+        />
+      )}
+
+      {/* Mark Paid Modal */}
+      <Modal visible={payModal} transparent animationType="slide">
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setPayModal(false)} />
+        <View style={styles.modalSheet}>
+          <Text style={styles.modalTitle}>Mark as Paid</Text>
+          <Text style={styles.modalLabel}>Actual Amount Paid (₹)</Text>
+          <TextInput
+            style={styles.modalInput}
+            keyboardType="decimal-pad"
+            value={actualAmount}
+            onChangeText={setActualAmount}
+            selectTextOnFocus
+            autoFocus
+          />
+          {defaultAmount !== actualAmount && (
+            <Text style={styles.modalHint}>Default: ₹{defaultAmount}</Text>
+          )}
+          <TouchableOpacity
+            style={[styles.modalBtn, paying && { opacity: 0.6 }]}
+            onPress={handleMarkPaid}
+            disabled={paying}
+          >
+            {paying ? <ActivityIndicator color="white" /> : <Text style={styles.modalBtnText}>Confirm Payment</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setPayModal(false)}>
+            <Text style={styles.modalCancelText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f8fafc' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, backgroundColor: 'white', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  headerTitle: { fontSize: 22, fontWeight: '700', color: '#0f172a' },
+  addBtn: { backgroundColor: '#01696f', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
+  addBtnText: { color: 'white', fontWeight: '600', fontSize: 14 },
+  tabs: { flexDirection: 'row', backgroundColor: 'white', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
+  tab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, gap: 6 },
+  activeTab: { borderBottomWidth: 2, borderBottomColor: '#01696f' },
+  tabText: { fontSize: 14, color: '#94a3b8', fontWeight: '500' },
+  activeTabText: { color: '#01696f', fontWeight: '700' },
+  badge: { backgroundColor: '#ef4444', borderRadius: 10, minWidth: 18, height: 18, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  badgeText: { color: 'white', fontSize: 10, fontWeight: '700' },
+  list: { padding: 16, gap: 12, paddingBottom: 40 },
+  card: { backgroundColor: 'white', borderRadius: 12, padding: 14, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 },
+  cardLeft: { flex: 1, marginRight: 12 },
+  cardRight: { alignItems: 'flex-end' },
+  cardName: { fontSize: 16, fontWeight: '600', color: '#0f172a', marginBottom: 2 },
+  cardMeta: { fontSize: 12, color: '#64748b', marginTop: 2 },
+  cardAmount: { fontSize: 18, fontWeight: '700', color: '#01696f' },
+  cardAmountRange: { fontSize: 11, color: '#94a3b8', marginTop: 2 },
+  dueRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1, borderRadius: 8, padding: 8, marginBottom: 8 },
+  dueText: { fontSize: 13, fontWeight: '600', flex: 1 },
+  cardActions: { flexDirection: 'row', gap: 6 },
+  actionBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
+  actionBtnText: { fontSize: 12, fontWeight: '600' },
+  cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#f1f5f9', paddingTop: 8 },
+  cardFooterText: { fontSize: 11, color: '#94a3b8' },
+  deleteText: { fontSize: 12, color: '#ef4444', fontWeight: '500' },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 },
+  emptyIcon: { fontSize: 48, marginBottom: 16 },
+  emptyTitle: { fontSize: 18, fontWeight: '600', color: '#334155', marginBottom: 8 },
+  emptySubtitle: { fontSize: 14, color: '#94a3b8', textAlign: 'center' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
+  modalSheet: { backgroundColor: 'white', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24, paddingBottom: 40 },
+  modalTitle: { fontSize: 20, fontWeight: '700', color: '#0f172a', marginBottom: 20, textAlign: 'center' },
+  modalLabel: { fontSize: 14, fontWeight: '500', color: '#374151', marginBottom: 8 },
+  modalInput: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 10, padding: 14, fontSize: 22, fontWeight: '700', color: '#0f172a', textAlign: 'center', marginBottom: 4 },
+  modalHint: { fontSize: 12, color: '#94a3b8', textAlign: 'center', marginBottom: 12 },
+  modalBtn: { backgroundColor: '#01696f', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 12 },
+  modalBtnText: { color: 'white', fontSize: 16, fontWeight: '700' },
+  modalCancelBtn: { padding: 14, alignItems: 'center', marginTop: 8 },
+  modalCancelText: { color: '#64748b', fontSize: 15, fontWeight: '500' },
+});

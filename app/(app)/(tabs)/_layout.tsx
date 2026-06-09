@@ -1,57 +1,40 @@
 import { Tabs } from 'expo-router';
-import { Home, Receipt, RefreshCw, BarChart2, Settings } from 'lucide-react-native';
+import { Ionicons } from '@expo/vector-icons';
 
-export default function TabLayout() {
+export default function TabsLayout() {
   return (
     <Tabs
-      screenOptions={{
-        headerShown: true,
-        tabBarActiveTintColor: '#2563eb',
-        tabBarInactiveTintColor: '#64748b',
+      screenOptions={({ route }) => ({
+        headerShown: false,
+        tabBarActiveTintColor: '#01696f',
+        tabBarInactiveTintColor: '#9ca3af',
         tabBarStyle: {
-          borderTopColor: '#e2e8f0',
           backgroundColor: '#ffffff',
-          paddingBottom: 4,
-          height: 58,
+          borderTopColor: '#e5e7eb',
+          borderTopWidth: 1,
+          height: 60,
+          paddingBottom: 8,
+          paddingTop: 4,
         },
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '500' },
-      }}
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+        tabBarIcon: ({ color, size }) => {
+          const icons: Record<string, string> = {
+            dashboard:  'grid-outline',
+            expenses:   'wallet-outline',
+            recurring:  'refresh-circle-outline',
+            reports:    'bar-chart-outline',
+            settings:   'settings-outline',
+          };
+          const name = (icons[route.name] ?? 'ellipse-outline') as keyof typeof Ionicons.glyphMap;
+          return <Ionicons name={name} size={size} color={color} />;
+        },
+      })}
     >
-      <Tabs.Screen
-        name="dashboard"
-        options={{
-          title: 'Dashboard',
-          tabBarIcon: ({ color, size }) => <Home {...{ color, size } as any} />,
-        }}
-      />
-      <Tabs.Screen
-        name="expenses"
-        options={{
-          title: 'Expenses',
-          tabBarIcon: ({ color, size }) => <Receipt {...{ color, size } as any} />,
-        }}
-      />
-      <Tabs.Screen
-        name="recurring"
-        options={{
-          title: 'Recurring',
-          tabBarIcon: ({ color, size }) => <RefreshCw {...{ color, size } as any} />,
-        }}
-      />
-      <Tabs.Screen
-        name="reports"
-        options={{
-          title: 'Reports',
-          tabBarIcon: ({ color, size }) => <BarChart2 {...{ color, size } as any} />,
-        }}
-      />
-      <Tabs.Screen
-        name="settings"
-        options={{
-          title: 'Settings',
-          tabBarIcon: ({ color, size }) => <Settings {...{ color, size } as any} />,
-        }}
-      />
+      <Tabs.Screen name="dashboard"  options={{ title: 'Dashboard' }} />
+      <Tabs.Screen name="expenses"   options={{ title: 'Expenses' }} />
+      <Tabs.Screen name="recurring"  options={{ title: 'Recurring' }} />
+      <Tabs.Screen name="reports"    options={{ title: 'Reports' }} />
+      <Tabs.Screen name="settings"   options={{ title: 'Settings' }} />
     </Tabs>
   );
 }
