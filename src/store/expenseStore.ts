@@ -1,15 +1,16 @@
 import { create } from 'zustand';
-import { 
-  getExpenses, 
-  addExpense, 
-  Expense, 
+import {
+  getExpenses,
+  addExpense,
+  Expense,
   ExpenseInsert,
   getRecurringTemplates,
   addRecurringTemplate,
   RecurringTemplate,
   RecurringTemplateInsert,
   deleteExpense,
-  deleteRecurringTemplate
+  deleteRecurringTemplate,
+  markRecurringPaid,
 } from '../db/queries';
 
 interface ExpenseState {
@@ -22,6 +23,7 @@ interface ExpenseState {
   removeExpense: (id: number) => Promise<void>;
   addRecurringTemplate: (template: RecurringTemplateInsert) => Promise<void>;
   removeRecurringTemplate: (id: number) => Promise<void>;
+  markRecurringPaid: (id: number, amount: number) => Promise<void>;
 }
 
 export const useExpenseStore = create<ExpenseState>((set, get) => ({
@@ -29,7 +31,7 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
   recurringTemplates: [],
   isLoading: false,
   error: null,
-  
+
   fetchData: async () => {
     set({ isLoading: true, error: null });
     try {
@@ -47,7 +49,7 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       await addExpense(expense);
-      await get().fetchData(); // Refresh list
+      await get().fetchData();
     } catch (error: any) {
       set({ error: error.message || 'Failed to add expense', isLoading: false });
     }
@@ -57,7 +59,7 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       await deleteExpense(id);
-      await get().fetchData(); // Refresh list
+      await get().fetchData();
     } catch (error: any) {
       set({ error: error.message || 'Failed to delete expense', isLoading: false });
     }
@@ -67,7 +69,7 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       await addRecurringTemplate(template);
-      await get().fetchData(); // Refresh list
+      await get().fetchData();
     } catch (error: any) {
       set({ error: error.message || 'Failed to add recurring template', isLoading: false });
     }
@@ -77,9 +79,19 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       await deleteRecurringTemplate(id);
-      await get().fetchData(); // Refresh list
+      await get().fetchData();
     } catch (error: any) {
       set({ error: error.message || 'Failed to delete recurring template', isLoading: false });
     }
-  }
+  },
+
+  markRecurringPaid: async (id, amount) => {
+    set({ isLoading: true, error: null });
+    try {
+      await markRecurringPaid(id, amount);
+      await get().fetchData();
+    } catch (error: any) {
+      set({ error: error.message || 'Failed to mark as paid', isLoading: false });
+    }
+  },
 }));
